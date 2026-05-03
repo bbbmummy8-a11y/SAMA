@@ -1,4 +1,5 @@
 // routes/auth.js — مصادقة المستخدمين وإدارة التسجيل
+const pool = require("../config/db");
 const express  = require('express');
 const bcrypt   = require('bcryptjs');
 const jwt      = require('jsonwebtoken');
@@ -50,7 +51,7 @@ router.post('/login', async (req, res) => {
         return res.status(400).json({ error: 'رقم التسجيل وكلمة المرور مطلوبان' });
 
     try {
-        const result = await query(
+        const result = await pool.query(
             'SELECT * FROM users WHERE registration_number = $1',
             [registration_number.trim()]
         );
