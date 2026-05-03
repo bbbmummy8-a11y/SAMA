@@ -1,5 +1,5 @@
 // routes/auth.js — مصادقة المستخدمين وإدارة التسجيل
-const pool = require("../config/db");
+const pool = require("../db");
 const express  = require('express');
 const bcrypt   = require('bcryptjs');
 const jwt      = require('jsonwebtoken');
