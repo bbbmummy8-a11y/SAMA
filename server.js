@@ -1,5 +1,5 @@
 //deploy
-
+console.log("DATABASE_URL:", process.env.DATABASE_URL);
 // server.js — نقطة دخول الخادم
 require('dotenv').config();
 
