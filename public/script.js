@@ -1,3 +1,4 @@
+const API = "https://sama-2.onrender.com";
 /* ===================================================================
    UniAbsence — script.js  (نسخة Backend حقيقي)
    جميع العمليات تذهب إلى /api  بدلاً من localStorage
@@ -47,7 +48,7 @@ async function apiCall(method, endpoint, body = null) {
             headers: body && !(body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}
         };
         if (body) opts.body = body instanceof FormData ? body : JSON.stringify(body);
-        return fetch('/api' + endpoint, opts);
+        return fetch(${API}/api${endpoint}, opts);
     };
 
     try {
@@ -59,7 +60,7 @@ async function apiCall(method, endpoint, body = null) {
 
             if (errData.code === 'TOKEN_EXPIRED') {
                 _refreshing = true;
-                const refreshRes = await fetch('/api/auth/refresh', { method: 'POST', credentials: 'include' });
+                const refreshRes = await fetch('${API}/api/auth/refresh', { method: 'POST', credentials: 'include' });
                 _refreshing = false;
                 if (refreshRes.ok) {
                     const rd = await refreshRes.json();
