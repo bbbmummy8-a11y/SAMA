@@ -3,6 +3,7 @@ const express = require('express');
 const bcrypt  = require('bcryptjs');
 const { query }  = require('../db');
 const { authenticate, requireRole, logAudit } = require('../middleware/auth');
+const { sendActivationEmail } = require('../mailer');
 
 const router = express.Router();
 router.use(authenticate);
@@ -153,7 +154,19 @@ router.put('/:id', requireRole('admin'), async (req, res) => {
 
         const result = await query(sql, params);
         await logAudit(req.user.id, 'USER_UPDATED', 'users', req.params.id, req, 200, {});
-        res.json({ user: formatUser(result.rows[0]) });
+
+        // إرسال إيميل التفعيل للأستاذ عند تفعيل حسابه لأول مرة
+        const updatedUser = result.rows[0];
+        const wasJustActivated = !u.is_active && newActive;
+        if (wasJustActivated && updatedUser.role === 'professor' && updatedUser.email) {
+            sendActivationEmail({
+                to:                 updatedUser.email,
+                fullName:           updatedUser.full_name_ar,
+                registrationNumber: updatedUser.registration_number
+            }); // fire-and-forget — لا ننتظر الإرسال حتى لا نعطّل الاستجابة
+        }
+
+        res.json({ user: formatUser(updatedUser) });
     } catch (err) {
         console.error('[PUT /users]', err);
         res.status(500).json({ error: 'خطأ في تحديث المستخدم' });
