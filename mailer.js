@@ -192,7 +192,7 @@ async function sendActivationEmail({ to, fullName, registrationNumber }) {
 }
 
 module.exports = { sendRegistrationEmail, sendActivationEmail };// mailer.js — إرسال البريد الإلكتروني عبر nodemailer
-const nodemailer = require('nodemailer');
+
 require('dotenv').config();
 
 // ─── إنشاء ناقل البريد من متغيرات البيئة ─────────────────────────────────────
