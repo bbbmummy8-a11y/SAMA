@@ -136,15 +136,19 @@ router.put('/:id', requireRole('admin'), async (req, res) => {
         const newYear   = year !== undefined ? year : u.year_of_study;
         const newActive = is_active !== undefined ? is_active : u.is_active;
         const newLocked = is_locked !== undefined ? is_locked : u.is_locked;
+        // Bug fix: when admin activates a professor, also clear is_pending.
+        // Previously PUT never touched is_pending → professor stayed blocked at login
+        // even after admin clicked "تفعيل الحساب".
+        const newPending = newActive ? false : u.is_pending;
 
         let sql, params;
         if (password && password.length >= 8) {
             const hash = await bcrypt.hash(password, 12);
-            sql    = `UPDATE users SET full_name_ar=$1, email=$2, specialization=$3, year_of_study=$4, is_active=$5, is_locked=$6, password_hash=$7, failed_login_attempts=0 WHERE id=$8 RETURNING *`;
-            params = [fullName, newEmail, newSpec, newYear, newActive, newLocked, hash, req.params.id];
+            sql    = `UPDATE users SET full_name_ar=$1, email=$2, specialization=$3, year_of_study=$4, is_active=$5, is_locked=$6, password_hash=$7, failed_login_attempts=0, is_pending=$8 WHERE id=$9 RETURNING *`;
+            params = [fullName, newEmail, newSpec, newYear, newActive, newLocked, hash, newPending, req.params.id];
         } else {
-            sql    = `UPDATE users SET full_name_ar=$1, email=$2, specialization=$3, year_of_study=$4, is_active=$5, is_locked=$6 WHERE id=$7 RETURNING *`;
-            params = [fullName, newEmail, newSpec, newYear, newActive, newLocked, req.params.id];
+            sql    = `UPDATE users SET full_name_ar=$1, email=$2, specialization=$3, year_of_study=$4, is_active=$5, is_locked=$6, is_pending=$7 WHERE id=$8 RETURNING *`;
+            params = [fullName, newEmail, newSpec, newYear, newActive, newLocked, newPending, req.params.id];
         }
 
         const result = await query(sql, params);
