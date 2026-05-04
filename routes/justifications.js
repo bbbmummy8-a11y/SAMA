@@ -198,29 +198,26 @@ router.post('/', requireRole('student'), upload.single('file'), async (req, res)
                  SET text_content=$1, file_path=COALESCE($2, file_path),
                      file_original_name=COALESCE($3, file_original_name),
                      file_type=COALESCE($4, file_type),
-                     file_size=COALESCE($5, file_size),
                      submission_attempt=submission_attempt+1,
                      status='pending'
-                 WHERE id=$6 RETURNING *`,
+                 WHERE id=$5 RETURNING *`,
                 [
                     notes || null,
                     req.file?.filename || null,
                     req.file?.originalname || null,
                     req.file?.mimetype || null,
-                    req.file?.size || null,
                     existingJust.rows[0].id
                 ]
             );
         } else {
             justResult = await client.query(
-                `INSERT INTO justifications (absence_id, student_id, text_content, file_path, file_original_name, file_type, file_size, submitted_at)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7, NOW()) RETURNING *`,
+                `INSERT INTO justifications (absence_id, student_id, text_content, file_path, file_original_name, file_type, submitted_at)
+                 VALUES ($1,$2,$3,$4,$5,$6, NOW()) RETURNING *`,
                 [
                     absenceIds[0], req.user.id, notes || null,
                     req.file?.filename || null,
                     req.file?.originalname || null,
-                    req.file?.mimetype || null,
-                    req.file?.size || null
+                    req.file?.mimetype || null
                 ]
             );
         }
@@ -281,14 +278,15 @@ router.put('/:id', requireRole('student'), upload.single('file'), async (req, re
             if (just.rows[0].file_path) {
                 fs.unlink(path.join(UPLOAD_DIR, just.rows[0].file_path), () => {});
             }
-            fileSql = ', file_path=$3, file_original_name=$4, file_type=$5, file_size=$6';
-            fileParams.push(req.file.filename, req.file.originalname, req.file.mimetype, req.file.size);
+            fileSql = ', file_path=$3, file_original_name=$4, file_type=$5';
+            fileParams.push(req.file.filename, req.file.originalname, req.file.mimetype);
         }
 
+        const idParam = 2 + fileParams.length;
         const result = await query(
             `UPDATE justifications SET text_content=$1, submission_attempt=submission_attempt+1 ${fileSql}
-             WHERE id=$2 RETURNING *`,
-            [notes || just.rows[0].text_content, req.params.id, ...fileParams]
+             WHERE id=$${idParam} RETURNING *`,
+            [notes || just.rows[0].text_content, ...fileParams, req.params.id]
         );
 
         res.json({ message: 'تم تحديث التبرير', justification: result.rows[0] });
@@ -322,12 +320,11 @@ router.post('/:id/review', requireRole('professor', 'admin'), async (req, res) =
 
         if (result.rows.length === 0) return res.status(404).json({ error: 'التبرير غير موجود' });
 
-        const absenceStatus = decision === 'accepted'
-            ? 'justified'
-            : decision === 'rejected'
-                ? 'unjustified'
-                : 'pending';
-        await query('UPDATE absences SET status=$1 WHERE id=$2', [absenceStatus, result.rows[0].absence_id]);
+        // Bug fix: جدول absences لا يحتوي على عمود status بل is_justified فقط
+        const isJustified = decision === 'accepted';
+        if (decision !== 'info_requested') {
+            await query('UPDATE absences SET is_justified=$1 WHERE id=$2', [isJustified, result.rows[0].absence_id]);
+        }
 
         await logAudit(req.user.id, `JUSTIFICATION_${decision.toUpperCase()}`, 'justifications', req.params.id, req, 200, { notes });
         res.json({ message: 'تم تحديث القرار', justification: result.rows[0] });
