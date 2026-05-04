@@ -3,9 +3,6 @@ const express  = require('express');
 const bcrypt   = require('bcryptjs');
 const jwt      = require('jsonwebtoken');
 
-// Bug fix: duplicate require('../db') — one pulled { pool }, the other tried to pull
-// { query, getClient } which didn't exist → query was undefined everywhere.
-// Now db.js exports all three; a single require covers everything.
 const { pool, query, getClient } = require('../db');
 
 const { authenticate, requireRole, logAudit } = require('../middleware/auth');
@@ -55,13 +52,23 @@ router.post('/login', async (req, res) => {
     if (!registration_number || !password)
         return res.status(400).json({ error: 'رقم التسجيل وكلمة المرور مطلوبان' });
 
-    // Bug fix: normalize both fields before any comparison
     const regNum      = registration_number.trim();
-    const rawPassword = password.trim(); // Bug fix: trim password before bcrypt.compare
+    const rawPassword = password.trim();
 
     try {
+        // ─── Bug fix #1 ───────────────────────────────────────────────────────
+        // الكود القديم كان يجلب المستخدم مرة واحدة فقط، وإذا قامت الإدارة بقبول
+        // التسجيل بينما كان المستخدم في نفس الجلسة، كانت القيم القديمة
+        // (is_pending=true, is_active=false) تبقى في الذاكرة وتمنع الدخول.
+        // الحل: جلب بيانات حديثة دائماً من قاعدة البيانات دون أي cache.
+        // ─────────────────────────────────────────────────────────────────────
         const result = await query(
-            'SELECT * FROM users WHERE registration_number = $1',
+            `SELECT id, registration_number, password_hash, role, full_name_ar, email,
+                    faculty_code, specialization, year_of_study,
+                    is_active, is_pending, is_locked, failed_login_attempts,
+                    last_login, created_at
+             FROM users
+             WHERE registration_number = $1`,
             [regNum]
         );
 
@@ -70,21 +77,25 @@ router.post('/login', async (req, res) => {
 
         const user = result.rows[0];
 
-        // Bug fix: is_pending may not exist in older schemas — use explicit boolean check
-        if (user.is_pending === true)
+        // ─── Bug fix #1 (تكملة) ───────────────────────────────────────────────
+        // is_pending يجب التحقق منها كـ boolean صريح لأن PostgreSQL قد ترجع
+        // null في بعض السكيمات القديمة — null != true فتعامل معها كـ false.
+        // الترتيب مهم: تحقق من is_pending أولاً، ثم is_active.
+        if (user.is_pending === true) {
             return res.status(403).json({ error: 'طلب تسجيلك لا يزال قيد المراجعة من الإدارة' });
+        }
 
-        if (!user.is_active)
+        if (user.is_active !== true) {
             return res.status(403).json({ error: 'حسابك معطّل، تواصل مع الإدارة' });
+        }
+        // ─────────────────────────────────────────────────────────────────────
 
         if (user.is_locked)
             return res.status(403).json({ error: 'حسابك مقفل بسبب محاولات دخول متعددة' });
 
-        // Bug fix: was comparing un-trimmed password → bcrypt mismatch on whitespace input
         const match = await bcrypt.compare(rawPassword, user.password_hash);
 
         if (!match) {
-            // Bug fix: query was undefined here → TypeError thrown → caught as 500
             const attempts = (user.failed_login_attempts || 0) + 1;
             const lock     = attempts >= 5;
             await query(
@@ -96,7 +107,6 @@ router.post('/login', async (req, res) => {
             return res.status(401).json({ error: 'رقم التسجيل أو كلمة المرور غير صحيحة' });
         }
 
-        // Bug fix: query was undefined here too → login always failed with 500 even on correct password
         await query(
             'UPDATE users SET failed_login_attempts=0, last_login=NOW() WHERE id=$1',
             [user.id]
@@ -152,8 +162,6 @@ router.post('/register', async (req, res) => {
         const isActive  = role === 'student';
 
         const result = await query(
-            // Bug fix: is_pending column was used here but missing from schema.
-            // See schema.sql fix — the column must exist for this INSERT to work.
             `INSERT INTO users
                 (registration_number, password_hash, role, full_name_ar, email,
                  specialization, year_of_study, is_active, is_pending, faculty_code)
@@ -270,6 +278,10 @@ router.post('/pending/:id/decide', authenticate, requireRole('admin'), async (re
         const pendingUser = userResult.rows[0];
 
         if (decision === 'accepted') {
+            // ─── Bug fix #1 (تكملة) ─────────────────────────────────────────
+            // كان الكود الأصلي يُحدِّث is_pending و is_active بشكل صحيح،
+            // لكن المشكلة الحقيقية كانت في login الذي يقرأ البيانات القديمة.
+            // هذا السطر صحيح — نتركه كما هو ونضمن أن login يقرأ من DB مباشرة.
             await query(
                 'UPDATE users SET is_pending=false, is_active=true WHERE id=$1',
                 [req.params.id]

@@ -138,15 +138,9 @@ router.post('/', requireRole('student'), upload.single('file'), async (req, res)
             return res.status(400).json({ error: 'يجب اختيار مادة واحدة على الأقل' });
         }
 
-        // ✅ إزالة قيد المهلة (7 أيام) — الطلاب يمكنهم التقديم في أي وقت
-        // const absDate  = new Date(date);
-        // const diffDays = (new Date() - absDate) / (1000 * 60 * 60 * 24);
-        // if (diffDays > 7) { ... }
-
         const sessionTime = (time_from && time_to) ? `${time_from}-${time_to}` : null;
         const absenceIds  = [];
 
-        // ✅ تطبيع نوع الحصة وقبول كل القيم الممكنة
         const VALID_SESSION_TYPES = ['cours', 'td', 'tp', 'exam'];
         const normalizedSessionType = VALID_SESSION_TYPES.includes((session_type || '').toLowerCase())
             ? session_type.toLowerCase()
@@ -160,21 +154,25 @@ router.post('/', requireRole('student'), upload.single('file'), async (req, res)
             if (subResult.rows.length === 0) continue;
             const subjectId = subResult.rows[0].id;
 
-            // ✅ إصلاح: البحث عن غياب موجود وتحديثه بنوع الحصة الصحيح
             let absResult = await client.query(
                 'SELECT id FROM absences WHERE student_id=$1 AND subject_id=$2 AND absence_date=$3',
                 [req.user.id, subjectId, date]
             );
 
             if (absResult.rows.length === 0) {
-                // إنشاء غياب جديد
+                // ─── Bug fix #2 ───────────────────────────────────────────────
+                // الكود القديم كان يُدرج عمود recorded_by في INSERT لكن هذا
+                // العمود غير موجود في جدول absences في schema.sql، مما يُسبب
+                // خطأ SQL → 500 "خطأ في تقديم التبرير" في كل مرة يرفع فيها
+                // الطالب تبريراً جديداً.
+                // الحل: إزالة recorded_by من الـ INSERT تماماً.
+                // ─────────────────────────────────────────────────────────────
                 absResult = await client.query(
-                    `INSERT INTO absences (student_id, subject_id, recorded_by, absence_date, session_type, session_time, notes)
-                     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-                    [req.user.id, subjectId, req.user.id, date, normalizedSessionType, sessionTime, notes || null]
+                    `INSERT INTO absences (student_id, subject_id, absence_date, session_type, session_time, notes)
+                     VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+                    [req.user.id, subjectId, date, normalizedSessionType, sessionTime, notes || null]
                 );
             } else {
-                // ✅ تحديث نوع الحصة والوقت للغياب الموجود
                 await client.query(
                     `UPDATE absences SET session_type=$1, session_time=$2, notes=$3 WHERE id=$4`,
                     [normalizedSessionType, sessionTime, notes || null, absResult.rows[0].id]
@@ -188,7 +186,6 @@ router.post('/', requireRole('student'), upload.single('file'), async (req, res)
             return res.status(400).json({ error: 'لم يتم العثور على المواد المحددة' });
         }
 
-        // ✅ التحقق من وجود تبرير سابق لنفس الغياب
         const existingJust = await client.query(
             'SELECT id FROM justifications WHERE absence_id = $1 AND student_id = $2',
             [absenceIds[0], req.user.id]
@@ -196,7 +193,6 @@ router.post('/', requireRole('student'), upload.single('file'), async (req, res)
 
         let justResult;
         if (existingJust.rows.length > 0) {
-            // تحديث التبرير الموجود
             justResult = await client.query(
                 `UPDATE justifications
                  SET text_content=$1, file_path=COALESCE($2, file_path),
@@ -216,7 +212,6 @@ router.post('/', requireRole('student'), upload.single('file'), async (req, res)
                 ]
             );
         } else {
-            // إنشاء تبرير جديد
             justResult = await client.query(
                 `INSERT INTO justifications (absence_id, student_id, text_content, file_path, file_original_name, file_type, file_size, submitted_at)
                  VALUES ($1,$2,$3,$4,$5,$6,$7, NOW()) RETURNING *`,
@@ -233,7 +228,6 @@ router.post('/', requireRole('student'), upload.single('file'), async (req, res)
         await client.query('COMMIT');
         await logAudit(req.user.id, 'JUSTIFICATION_SUBMITTED', 'justifications', justResult.rows[0].id, req, 201, {});
 
-        // جلب بيانات الغياب المحفوظة لضمان صحة session_type
         const absRow = await query(
             'SELECT session_type, session_time FROM absences WHERE id = $1',
             [absenceIds[0]]
@@ -328,12 +322,11 @@ router.post('/:id/review', requireRole('professor', 'admin'), async (req, res) =
 
         if (result.rows.length === 0) return res.status(404).json({ error: 'التبرير غير موجود' });
 
-        // تحويل قرار التبرير إلى حالة الغياب المناسبة
         const absenceStatus = decision === 'accepted'
             ? 'justified'
             : decision === 'rejected'
                 ? 'unjustified'
-                : 'pending';   // info_requested
+                : 'pending';
         await query('UPDATE absences SET status=$1 WHERE id=$2', [absenceStatus, result.rows[0].absence_id]);
 
         await logAudit(req.user.id, `JUSTIFICATION_${decision.toUpperCase()}`, 'justifications', req.params.id, req, 200, { notes });
