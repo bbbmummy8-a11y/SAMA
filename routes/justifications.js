@@ -168,14 +168,14 @@ router.post('/', requireRole('student'), upload.single('file'), async (req, res)
                 // الحل: إزالة recorded_by من الـ INSERT تماماً.
                 // ─────────────────────────────────────────────────────────────
                 absResult = await client.query(
-                    `INSERT INTO absences (student_id, subject_id, absence_date, session_type, session_time, notes)
-                     VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-                    [req.user.id, subjectId, date, normalizedSessionType, sessionTime, notes || null]
+                    `INSERT INTO absences (student_id, subject_id, absence_date, session_type, session_time)
+                     VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+                    [req.user.id, subjectId, date, normalizedSessionType, sessionTime]
                 );
             } else {
                 await client.query(
-                    `UPDATE absences SET session_type=$1, session_time=$2, notes=$3 WHERE id=$4`,
-                    [normalizedSessionType, sessionTime, notes || null, absResult.rows[0].id]
+                    `UPDATE absences SET session_type=$1, session_time=$2 WHERE id=$3`,
+                    [normalizedSessionType, sessionTime, absResult.rows[0].id]
                 );
             }
             absenceIds.push(absResult.rows[0].id);
@@ -198,7 +198,6 @@ router.post('/', requireRole('student'), upload.single('file'), async (req, res)
                  SET text_content=$1, file_path=COALESCE($2, file_path),
                      file_original_name=COALESCE($3, file_original_name),
                      file_type=COALESCE($4, file_type),
-                     submission_attempt=submission_attempt+1,
                      status='pending'
                  WHERE id=$5 RETURNING *`,
                 [
@@ -284,7 +283,7 @@ router.put('/:id', requireRole('student'), upload.single('file'), async (req, re
 
         const idParam = 2 + fileParams.length;
         const result = await query(
-            `UPDATE justifications SET text_content=$1, submission_attempt=submission_attempt+1 ${fileSql}
+            `UPDATE justifications SET text_content=$1 ${fileSql}
              WHERE id=$${idParam} RETURNING *`,
             [notes || just.rows[0].text_content, ...fileParams, req.params.id]
         );
@@ -320,10 +319,9 @@ router.post('/:id/review', requireRole('professor', 'admin'), async (req, res) =
 
         if (result.rows.length === 0) return res.status(404).json({ error: 'التبرير غير موجود' });
 
-        // Bug fix: جدول absences لا يحتوي على عمود status بل is_justified فقط
-        const isJustified = decision === 'accepted';
         if (decision !== 'info_requested') {
-            await query('UPDATE absences SET is_justified=$1 WHERE id=$2', [isJustified, result.rows[0].absence_id]);
+            await query('UPDATE absences SET is_justified=$1 WHERE id=$2',
+                [decision === 'accepted', result.rows[0].absence_id]);
         }
 
         await logAudit(req.user.id, `JUSTIFICATION_${decision.toUpperCase()}`, 'justifications', req.params.id, req, 200, { notes });
