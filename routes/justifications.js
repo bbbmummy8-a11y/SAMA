@@ -84,7 +84,7 @@ router.get('/', async (req, res) => {
         }
 
         const sql = `
-            SELECT j.*, a.absence_date, a.session_type, a.session_time, a.notes AS absence_notes,
+            SELECT j.*, a.absence_date, a.session_type, a.session_time,
                    u.full_name_ar AS student_name, u.specialization AS student_specialty,
                    s.name_ar AS subject_name, s.id AS subject_id,
                    rev.full_name_ar AS reviewer_name,
@@ -268,7 +268,7 @@ router.put('/:id', requireRole('student'), upload.single('file'), async (req, re
 
         await query(
             'UPDATE absences SET session_type=COALESCE($1,session_type), session_time=COALESCE($2,session_time) WHERE id=$3',
-            [session_type, sessionTime, just.rows[0].absence_id]
+            [session_type || null, sessionTime, just.rows[0].absence_id]
         );
 
         let fileSql = '';
