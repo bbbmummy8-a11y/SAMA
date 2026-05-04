@@ -1,22 +1,11 @@
-// mailer.js — إرسال البريد الإلكتروني عبر nodemailer
-const nodemailer = require('nodemailer');
+// mailer.js — إرسال البريد عبر Resend API (يعمل على Render بدون قيود SMTP)
+const { Resend } = require('resend');
 require('dotenv').config();
 
-// ─── إنشاء ناقل البريد من متغيرات البيئة ─────────────────────────────────────
-function createTransporter() {
-    return nodemailer.createTransport({
-        host:   process.env.MAIL_HOST   || 'smtp.gmail.com',
-        port:   parseInt(process.env.MAIL_PORT) || 587,
-        secure: process.env.MAIL_SECURE === 'true',
-        auth: {
-            user: process.env.MAIL_USER,
-            pass: process.env.MAIL_PASS
-        }
-    });
-}
-
 const FROM_NAME    = process.env.MAIL_FROM_NAME || 'نظام UniAbsence';
-const FROM_ADDRESS = process.env.MAIL_USER      || 'noreply@univ.dz';
+// ملاحظة: في الحساب المجاني لـ Resend يجب استخدام onboarding@resend.dev
+// بعد إضافة دومين خاص يمكن تغييره
+const FROM_ADDRESS = process.env.MAIL_FROM_ADDRESS || 'onboarding@resend.dev';
 
 // ─── قالب HTML مشترك ─────────────────────────────────────────────────────────
 function wrapHtml(title, color, icon, bodyContent) {
@@ -66,13 +55,37 @@ function wrapHtml(title, color, icon, bodyContent) {
 </html>`;
 }
 
-// ─── إرسال إشعار قرار التسجيل (قبول / رفض) ───────────────────────────────────
-async function sendRegistrationEmail({ to, fullName, registrationNumber, decision, rejectionReason }) {
-    if (!process.env.MAIL_USER || !process.env.MAIL_PASS) {
-        console.warn('[mailer] متغيرات MAIL_USER / MAIL_PASS غير محددة — لن يُرسَل البريد');
+// ─── دالة الإرسال المشتركة ────────────────────────────────────────────────────
+async function sendEmail({ to, subject, html, text }) {
+    if (!process.env.RESEND_API_KEY) {
+        console.error('[mailer] ❌ RESEND_API_KEY غير موجود في Environment Variables!');
         return;
     }
 
+    const resend = new Resend(process.env.RESEND_API_KEY);
+
+    try {
+        const { data, error } = await resend.emails.send({
+            from:    `${FROM_NAME} <${FROM_ADDRESS}>`,
+            to:      [to],
+            subject,
+            html,
+            text
+        });
+
+        if (error) {
+            console.error('[mailer] ❌ خطأ من Resend:', JSON.stringify(error));
+            return;
+        }
+
+        console.log('[mailer] ✅ الإيميل أُرسل بنجاح — id:', data.id);
+    } catch (err) {
+        console.error('[mailer] ❌ استثناء أثناء الإرسال:', err.message);
+    }
+}
+
+// ─── إرسال إشعار قرار التسجيل (قبول / رفض) ───────────────────────────────────
+async function sendRegistrationEmail({ to, fullName, registrationNumber, decision, rejectionReason }) {
     const isAccepted = decision === 'accepted';
 
     const subject = isAccepted
@@ -120,43 +133,20 @@ async function sendRegistrationEmail({ to, fullName, registrationNumber, decisio
           </p>`;
     }
 
-    const html = wrapHtml(title, color, icon, bodyContent);
-
-    try {
-        const transporter = createTransporter();
-        await transporter.sendMail({
-            from:    `"${FROM_NAME}" <${FROM_ADDRESS}>`,
-            to,
-            subject,
-            html,
-            text: isAccepted
-                ? `مرحباً ${fullName}، تم قبول طلب تسجيلك. رقم التسجيل: ${registrationNumber}`
-                : `مرحباً ${fullName}، تم رفض طلب تسجيلك.${rejectionReason ? ' السبب: ' + rejectionReason : ''}`
-        });
-        console.log(`[mailer] ✅ إيميل ${isAccepted ? 'قبول' : 'رفض'} أُرسل إلى: ${to}`);
-    } catch (err) {
-        console.error('[mailer] ❌ فشل الإرسال:', err.message);
-    }
+    console.log(`[mailer] 📤 إرسال إيميل ${isAccepted ? 'قبول' : 'رفض'} إلى: ${to}`);
+    await sendEmail({
+        to,
+        subject,
+        html: wrapHtml(title, color, icon, bodyContent),
+        text: isAccepted
+            ? `مرحباً ${fullName}، تم قبول طلب تسجيلك. رقم التسجيل: ${registrationNumber}`
+            : `مرحباً ${fullName}، تم رفض طلب تسجيلك.${rejectionReason ? ' السبب: ' + rejectionReason : ''}`
+    });
 }
 
 // ─── إرسال إشعار تفعيل حساب الأستاذ ─────────────────────────────────────────
 async function sendActivationEmail({ to, fullName, registrationNumber }) {
-    console.log('[mailer] 🔔 sendActivationEmail استُدعيت — إيميل المستقبل:', to);
-
-    // ── التحقق من متغيرات البيئة ──
-    if (!process.env.MAIL_USER || !process.env.MAIL_PASS) {
-        console.error('[mailer] ❌ MAIL_USER أو MAIL_PASS مفقودان في Environment Variables!');
-        console.error('[mailer]    MAIL_USER =', process.env.MAIL_USER  || '⚠️  غير محدد');
-        console.error('[mailer]    MAIL_PASS =', process.env.MAIL_PASS  ? '✅ موجود' : '⚠️  غير محدد');
-        return;
-    }
-
-    console.log('[mailer] 📤 جارٍ الإرسال...');
-    console.log('[mailer]    من      :', process.env.MAIL_USER);
-    console.log('[mailer]    إلى     :', to);
-    console.log('[mailer]    SMTP    :', process.env.MAIL_HOST || 'smtp.gmail.com', ':', process.env.MAIL_PORT || 587);
-
-    const subject = '✅ تم تفعيل حسابك — UniAbsence';
+    console.log('[mailer] 🔔 sendActivationEmail — إلى:', to);
 
     const bodyContent = `
       <p>مرحباً <strong>${fullName}</strong>،</p>
@@ -183,23 +173,12 @@ async function sendActivationEmail({ to, fullName, registrationNumber }) {
         إذا لم تطلب هذا الحساب أو كان لديك أي استفسار، يُرجى التواصل مع الإدارة.
       </p>`;
 
-    const html = wrapHtml('تم تفعيل حسابك', '#10b981', '🎉', bodyContent);
-
-    try {
-        const transporter = createTransporter();
-        const info = await transporter.sendMail({
-            from:    `"${FROM_NAME}" <${FROM_ADDRESS}>`,
-            to,
-            subject,
-            html,
-            text: `مرحباً ${fullName}، تم تفعيل حسابك في منصة UniAbsence. رقم التسجيل: ${registrationNumber}. يمكنك الولوج إلى المنصة الآن.`
-        });
-        console.log('[mailer] ✅ إيميل التفعيل أُرسل بنجاح إلى:', to);
-        console.log('[mailer]    messageId:', info.messageId);
-    } catch (err) {
-        console.error('[mailer] ❌ فشل إرسال إيميل التفعيل:', err.message);
-        console.error('[mailer]    الخطأ الكامل:', JSON.stringify(err, null, 2));
-    }
+    await sendEmail({
+        to,
+        subject: '✅ تم تفعيل حسابك — UniAbsence',
+        html:    wrapHtml('تم تفعيل حسابك', '#10b981', '🎉', bodyContent),
+        text:    `مرحباً ${fullName}، تم تفعيل حسابك في منصة UniAbsence. رقم التسجيل: ${registrationNumber}. يمكنك الولوج إلى المنصة الآن.`
+    });
 }
 
 module.exports = { sendRegistrationEmail, sendActivationEmail };
