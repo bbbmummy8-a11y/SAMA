@@ -1,6 +1,5 @@
--- ============================================================
---   schema.sql — إنشاء قاعدة بيانات UniAbsence من الصفر
---   شغّله في pgAdmin مرة واحدة على قاعدة بيانات فارغة
+-- schema.sql — إنشاء قاعدة بيانات UniAbsence من الصفر
+-- شغّله في pgAdmin مرة واحدة على قاعدة بيانات فارغة
 -- ============================================================
 
 -- تفعيل uuid
@@ -19,6 +18,9 @@ CREATE TABLE IF NOT EXISTS users (
     specialization        VARCHAR(100),
     year_of_study         INTEGER      CHECK (year_of_study IS NULL OR (year_of_study >= 1 AND year_of_study <= 7)),
     is_active             BOOLEAN      DEFAULT TRUE,
+    -- Bug fix: is_pending was used in routes/auth.js (register + login + /pending)
+    -- but the column was never defined here → INSERT in register threw a SQL error.
+    is_pending            BOOLEAN      DEFAULT FALSE,
     is_locked             BOOLEAN      DEFAULT FALSE,
     failed_login_attempts INTEGER      DEFAULT 0,
     last_login            TIMESTAMPTZ,
@@ -123,7 +125,7 @@ CREATE INDEX IF NOT EXISTS idx_users_reg          ON users(registration_number);
 -- كلمة المرور: Admin@123456
 INSERT INTO users (
     registration_number, password_hash, role,
-    full_name_ar, email, faculty_code, is_active
+    full_name_ar, email, faculty_code, is_active, is_pending
 ) VALUES (
     'FAC-INFO-01',
     '$2b$12$9SG1aKzeF1kbY0yo9t/coOyYucRxLjtcHp0HyLn6tgjWHkYUMCJJG',
@@ -131,14 +133,16 @@ INSERT INTO users (
     'معهد العلوم',
     'admin@univ.dz',
     'GEN',
-    true
+    true,
+    false   -- Bug fix: admin must never be pending
 ) ON CONFLICT (registration_number) DO UPDATE SET
     is_active             = true,
+    is_pending            = false,
     is_locked             = false,
     failed_login_attempts = 0;
 
 -- ─── تحقق من النتيجة ─────────────────────────────────────────────────────────
 SELECT 'تم إنشاء قاعدة البيانات بنجاح ✅' AS النتيجة;
 
-SELECT registration_number, full_name_ar, role, is_active
+SELECT registration_number, full_name_ar, role, is_active, is_pending
 FROM users;

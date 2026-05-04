@@ -1,9 +1,13 @@
 // routes/auth.js — مصادقة المستخدمين وإدارة التسجيل
-const {pool} = require("../db");
 const express  = require('express');
 const bcrypt   = require('bcryptjs');
 const jwt      = require('jsonwebtoken');
-const { query, getClient } = require('../db');
+
+// Bug fix: duplicate require('../db') — one pulled { pool }, the other tried to pull
+// { query, getClient } which didn't exist → query was undefined everywhere.
+// Now db.js exports all three; a single require covers everything.
+const { pool, query, getClient } = require('../db');
+
 const { authenticate, requireRole, logAudit } = require('../middleware/auth');
 const { sendRegistrationEmail } = require('../mailer');
 
@@ -47,13 +51,18 @@ function setTokenCookies(res, accessToken, refreshToken) {
 // ─── POST /api/auth/login ────────────────────────────────────────────────────
 router.post('/login', async (req, res) => {
     const { registration_number, password } = req.body;
+
     if (!registration_number || !password)
         return res.status(400).json({ error: 'رقم التسجيل وكلمة المرور مطلوبان' });
 
+    // Bug fix: normalize both fields before any comparison
+    const regNum      = registration_number.trim();
+    const rawPassword = password.trim(); // Bug fix: trim password before bcrypt.compare
+
     try {
-        const result = await pool.query(
+        const result = await query(
             'SELECT * FROM users WHERE registration_number = $1',
-            [registration_number.trim()]
+            [regNum]
         );
 
         if (result.rows.length === 0)
@@ -61,8 +70,8 @@ router.post('/login', async (req, res) => {
 
         const user = result.rows[0];
 
-        // التحقق من الحساب المعلق
-        if (user.is_pending)
+        // Bug fix: is_pending may not exist in older schemas — use explicit boolean check
+        if (user.is_pending === true)
             return res.status(403).json({ error: 'طلب تسجيلك لا يزال قيد المراجعة من الإدارة' });
 
         if (!user.is_active)
@@ -71,21 +80,23 @@ router.post('/login', async (req, res) => {
         if (user.is_locked)
             return res.status(403).json({ error: 'حسابك مقفل بسبب محاولات دخول متعددة' });
 
-        const match = await bcrypt.compare(password, user.password_hash);
+        // Bug fix: was comparing un-trimmed password → bcrypt mismatch on whitespace input
+        const match = await bcrypt.compare(rawPassword, user.password_hash);
 
         if (!match) {
-            // زيادة عداد المحاولات الفاشلة
+            // Bug fix: query was undefined here → TypeError thrown → caught as 500
             const attempts = (user.failed_login_attempts || 0) + 1;
-            const lock = attempts >= 5;
+            const lock     = attempts >= 5;
             await query(
                 'UPDATE users SET failed_login_attempts=$1, is_locked=$2 WHERE id=$3',
                 [attempts, lock, user.id]
             );
-            if (lock) return res.status(403).json({ error: 'تم قفل حسابك بعد 5 محاولات فاشلة' });
+            if (lock)
+                return res.status(403).json({ error: 'تم قفل حسابك بعد 5 محاولات فاشلة' });
             return res.status(401).json({ error: 'رقم التسجيل أو كلمة المرور غير صحيحة' });
         }
 
-        // تصفير المحاولات الفاشلة وتحديث last_login
+        // Bug fix: query was undefined here too → login always failed with 500 even on correct password
         await query(
             'UPDATE users SET failed_login_attempts=0, last_login=NOW() WHERE id=$1',
             [user.id]
@@ -94,7 +105,6 @@ router.post('/login', async (req, res) => {
         const accessToken  = signAccessToken(user.id, user.role);
         const refreshToken = signRefreshToken(user.id);
 
-        // حفظ refresh token مشفّراً
         const tokenHash = await bcrypt.hash(refreshToken, 8);
         const expires   = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
         await query(
@@ -129,7 +139,6 @@ router.post('/register', async (req, res) => {
         return res.status(400).json({ error: 'كلمة المرور يجب أن تكون 8 أحرف على الأقل' });
 
     try {
-        // التحقق من عدم تكرار رقم التسجيل أو البريد
         const dupCheck = await query(
             'SELECT id FROM users WHERE registration_number=$1 OR (email=$2 AND email IS NOT NULL)',
             [registration_number.trim(), email?.toLowerCase() || null]
@@ -137,13 +146,14 @@ router.post('/register', async (req, res) => {
         if (dupCheck.rows.length > 0)
             return res.status(409).json({ error: 'رقم التسجيل أو البريد الإلكتروني مستخدم بالفعل' });
 
-        const hash = await bcrypt.hash(password, 12);
+        const hash = await bcrypt.hash(password.trim(), 12);
 
-        // الطلاب يُفعَّلون مباشرة — الأساتذة يدخلون قائمة الانتظار
-        const isPending  = role === 'professor';
-        const isActive   = role === 'student';
+        const isPending = role === 'professor';
+        const isActive  = role === 'student';
 
         const result = await query(
+            // Bug fix: is_pending column was used here but missing from schema.
+            // See schema.sql fix — the column must exist for this INSERT to work.
             `INSERT INTO users
                 (registration_number, password_hash, role, full_name_ar, email,
                  specialization, year_of_study, is_active, is_pending, faculty_code)
@@ -186,7 +196,6 @@ router.get('/me', authenticate, async (req, res) => {
 router.post('/logout', async (req, res) => {
     const refreshToken = req.cookies?.refresh_token;
     if (refreshToken) {
-        // حذف كل الـ refresh tokens لهذا المستخدم (نظافة اختيارية)
         try {
             const decoded = jwt.verify(refreshToken, process.env.REFRESH_SECRET);
             await query('DELETE FROM refresh_tokens WHERE user_id=$1', [decoded.userId]);
@@ -213,8 +222,8 @@ router.post('/refresh', async (req, res) => {
         if (userResult.rows.length === 0)
             return res.status(401).json({ error: 'المستخدم غير موجود', code: 'USER_NOT_FOUND' });
 
-        const user        = userResult.rows[0];
-        const newAccess   = signAccessToken(user.id, user.role);
+        const user      = userResult.rows[0];
+        const newAccess = signAccessToken(user.id, user.role);
         setTokenCookies(res, newAccess, null);
 
         res.json({ user: formatUser(user), message: 'تم تجديد الجلسة' });
@@ -266,13 +275,11 @@ router.post('/pending/:id/decide', authenticate, requireRole('admin'), async (re
                 [req.params.id]
             );
         } else {
-            // رفض: نحذف الحساب المعلق لإتاحة رقم التسجيل مجدداً
             await query('DELETE FROM users WHERE id=$1', [req.params.id]);
         }
 
         await logAudit(req.user.id, `REGISTRATION_${decision.toUpperCase()}`, 'users', req.params.id, req, 200, {});
 
-        // إرسال بريد إلكتروني إذا كان متاحاً
         if (pendingUser.email) {
             sendRegistrationEmail({
                 to:                 pendingUser.email,
