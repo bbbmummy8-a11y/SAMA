@@ -49,80 +49,59 @@ function setTokenCookies(res, accessToken, refreshToken) {
 }
 
 // ─── POST /api/auth/login ────────────────────────────────────────────────────
-router.post('/login', async (req, res) => {
-    const { registration_number, password } = req.body;
+router.post('/register', async (req, res) => {
+  const {
+    firstname,
+    lastname,
+    email,
+    role,
+    specialty,
+    year,
+    password,
+    registration_number
+  } = req.body;
 
-    if (!registration_number || !password)
-        return res.status(400).json({ error: 'رقم التسجيل وكلمة المرور مطلوبان' });
+  // تحقق من البيانات
+  if (!firstname || !lastname || !password || !registration_number) {
+    return res.status(400).json({ error: 'جميع الحقول مطلوبة' });
+  }
 
-    // Bug fix: normalize both fields before any comparison
-    const regNum      = registration_number.trim();
-    const rawPassword = password.trim(); // Bug fix: trim password before bcrypt.compare
+  try {
+    // 🔴 أهم خطوة: تشفير كلمة السر
+    const hashedPassword = await bcrypt.hash(password.trim(), 10);
 
-    try {
-        const result = await query(
-            'SELECT * FROM users WHERE registration_number = $1',
-            [regNum]
-        );
+    // إدخال المستخدم
+    const result = await query(
+      `INSERT INTO users 
+      (registration_number, password_hash, role, full_name_ar, email, specialization, year_of_study)
+      VALUES ($1,$2,$3,$4,$5,$6,$7)
+      RETURNING *`,
+      [
+        registration_number.trim(),
+        hashedPassword, // ✅ هنا نحط hash مش password عادي
+        role || 'student',
+        ${firstname} ${lastname},
+        email || null,
+        specialty || null,
+        year || null
+      ]
+    );
 
-        if (result.rows.length === 0)
-            return res.status(401).json({ error: 'رقم التسجيل أو كلمة المرور غير صحيحة' });
+    res.status(201).json({
+      message: 'تم إنشاء الحساب بنجاح',
+      user: result.rows[0]
+    });
 
-        const user = result.rows[0];
+  } catch (err) {
+    console.error('[REGISTER ERROR]', err);
 
-        // Bug fix: is_pending may not exist in older schemas — use explicit boolean check
-        if (user.is_pending === true)
-            return res.status(403).json({ error: 'طلب تسجيلك لا يزال قيد المراجعة من الإدارة' });
-
-        if (!user.is_active)
-            return res.status(403).json({ error: 'حسابك معطّل، تواصل مع الإدارة' });
-
-        if (user.is_locked)
-            return res.status(403).json({ error: 'حسابك مقفل بسبب محاولات دخول متعددة' });
-
-        // Bug fix: was comparing un-trimmed password → bcrypt mismatch on whitespace input
-        const match = await bcrypt.compare(rawPassword, user.password_hash);
-
-        if (!match) {
-            // Bug fix: query was undefined here → TypeError thrown → caught as 500
-            const attempts = (user.failed_login_attempts || 0) + 1;
-            const lock     = attempts >= 5;
-            await query(
-                'UPDATE users SET failed_login_attempts=$1, is_locked=$2 WHERE id=$3',
-                [attempts, lock, user.id]
-            );
-            if (lock)
-                return res.status(403).json({ error: 'تم قفل حسابك بعد 5 محاولات فاشلة' });
-            return res.status(401).json({ error: 'رقم التسجيل أو كلمة المرور غير صحيحة' });
-        }
-
-        // Bug fix: query was undefined here too → login always failed with 500 even on correct password
-        await query(
-            'UPDATE users SET failed_login_attempts=0, last_login=NOW() WHERE id=$1',
-            [user.id]
-        );
-
-        const accessToken  = signAccessToken(user.id, user.role);
-        const refreshToken = signRefreshToken(user.id);
-
-        const tokenHash = await bcrypt.hash(refreshToken, 8);
-        const expires   = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-        await query(
-            'INSERT INTO refresh_tokens (user_id, token_hash, expires_at) VALUES ($1,$2,$3)',
-            [user.id, tokenHash, expires]
-        );
-
-        setTokenCookies(res, accessToken, refreshToken);
-        await logAudit(user.id, 'LOGIN', 'users', user.id, req, 200, {});
-
-        res.json({
-            user: formatUser(user),
-            message: 'تم تسجيل الدخول بنجاح'
-        });
-    } catch (err) {
-        console.error('[POST /auth/login]', err);
-        res.status(500).json({ error: 'خطأ في الخادم' });
+    // معالجة تكرار رقم التسجيل
+    if (err.code === '23505') {
+      return res.status(400).json({ error: 'رقم التسجيل موجود مسبقاً' });
     }
+
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
 });
 
 // ─── POST /api/auth/register ─────────────────────────────────────────────────
