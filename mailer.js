@@ -7,7 +7,7 @@ function createTransporter() {
     return nodemailer.createTransport({
         host:   process.env.MAIL_HOST   || 'smtp.gmail.com',
         port:   parseInt(process.env.MAIL_PORT) || 587,
-        secure: process.env.MAIL_SECURE === 'true', // true لمنفذ 465
+        secure: process.env.MAIL_SECURE === 'true',
         auth: {
             user: process.env.MAIL_USER,
             pass: process.env.MAIL_PASS
@@ -135,17 +135,26 @@ async function sendRegistrationEmail({ to, fullName, registrationNumber, decisio
         });
         console.log(`[mailer] ✅ إيميل ${isAccepted ? 'قبول' : 'رفض'} أُرسل إلى: ${to}`);
     } catch (err) {
-        // لا نوقف الطلب بسبب خطأ في البريد
         console.error('[mailer] ❌ فشل الإرسال:', err.message);
     }
 }
 
 // ─── إرسال إشعار تفعيل حساب الأستاذ ─────────────────────────────────────────
 async function sendActivationEmail({ to, fullName, registrationNumber }) {
+    console.log('[mailer] 🔔 sendActivationEmail استُدعيت — إيميل المستقبل:', to);
+
+    // ── التحقق من متغيرات البيئة ──
     if (!process.env.MAIL_USER || !process.env.MAIL_PASS) {
-        console.warn('[mailer] متغيرات MAIL_USER / MAIL_PASS غير محددة — لن يُرسَل البريد');
+        console.error('[mailer] ❌ MAIL_USER أو MAIL_PASS مفقودان في Environment Variables!');
+        console.error('[mailer]    MAIL_USER =', process.env.MAIL_USER  || '⚠️  غير محدد');
+        console.error('[mailer]    MAIL_PASS =', process.env.MAIL_PASS  ? '✅ موجود' : '⚠️  غير محدد');
         return;
     }
+
+    console.log('[mailer] 📤 جارٍ الإرسال...');
+    console.log('[mailer]    من      :', process.env.MAIL_USER);
+    console.log('[mailer]    إلى     :', to);
+    console.log('[mailer]    SMTP    :', process.env.MAIL_HOST || 'smtp.gmail.com', ':', process.env.MAIL_PORT || 587);
 
     const subject = '✅ تم تفعيل حسابك — UniAbsence';
 
@@ -178,16 +187,18 @@ async function sendActivationEmail({ to, fullName, registrationNumber }) {
 
     try {
         const transporter = createTransporter();
-        await transporter.sendMail({
+        const info = await transporter.sendMail({
             from:    `"${FROM_NAME}" <${FROM_ADDRESS}>`,
             to,
             subject,
             html,
             text: `مرحباً ${fullName}، تم تفعيل حسابك في منصة UniAbsence. رقم التسجيل: ${registrationNumber}. يمكنك الولوج إلى المنصة الآن.`
         });
-        console.log(`[mailer] ✅ إيميل التفعيل أُرسل إلى: ${to}`);
+        console.log('[mailer] ✅ إيميل التفعيل أُرسل بنجاح إلى:', to);
+        console.log('[mailer]    messageId:', info.messageId);
     } catch (err) {
         console.error('[mailer] ❌ فشل إرسال إيميل التفعيل:', err.message);
+        console.error('[mailer]    الخطأ الكامل:', JSON.stringify(err, null, 2));
     }
 }
 

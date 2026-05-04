@@ -137,6 +137,7 @@ router.put('/:id', requireRole('admin'), async (req, res) => {
         const newYear   = year !== undefined ? year : u.year_of_study;
         const newActive = is_active !== undefined ? is_active : u.is_active;
         const newLocked = is_locked !== undefined ? is_locked : u.is_locked;
+
         // Bug fix: when admin activates a professor, also clear is_pending.
         // Previously PUT never touched is_pending → professor stayed blocked at login
         // even after admin clicked "تفعيل الحساب".
@@ -155,15 +156,28 @@ router.put('/:id', requireRole('admin'), async (req, res) => {
         const result = await query(sql, params);
         await logAudit(req.user.id, 'USER_UPDATED', 'users', req.params.id, req, 200, {});
 
-        // إرسال إيميل التفعيل للأستاذ عند تفعيل حسابه لأول مرة
-        const updatedUser = result.rows[0];
-        const wasJustActivated = !u.is_active && newActive;
+        // ── إرسال إيميل التفعيل للأستاذ عند تفعيل حسابه ──────────────────────
+        // الشرط: الحساب كان غير نشط وأصبح الآن نشطاً + دوره أستاذ + لديه إيميل
+        const updatedUser      = result.rows[0];
+        const wasJustActivated = !u.is_active && newActive === true;
+
+        console.log('[users] PUT /:id — التحقق من شرط إرسال إيميل التفعيل:');
+        console.log('[users]   u.is_active (قبل)  :', u.is_active);
+        console.log('[users]   newActive   (بعد)  :', newActive);
+        console.log('[users]   wasJustActivated    :', wasJustActivated);
+        console.log('[users]   role                :', updatedUser.role);
+        console.log('[users]   email               :', updatedUser.email);
+
         if (wasJustActivated && updatedUser.role === 'professor' && updatedUser.email) {
-            sendActivationEmail({
+            console.log('[users] ✅ الشرط محقق — جارٍ استدعاء sendActivationEmail...');
+            // await لضمان ظهور الأخطاء في الـ logs
+            await sendActivationEmail({
                 to:                 updatedUser.email,
                 fullName:           updatedUser.full_name_ar,
                 registrationNumber: updatedUser.registration_number
-            }); // fire-and-forget — لا ننتظر الإرسال حتى لا نعطّل الاستجابة
+            });
+        } else {
+            console.log('[users] ⏭️  لا حاجة لإرسال إيميل التفعيل (الشرط غير محقق)');
         }
 
         res.json({ user: formatUser(updatedUser) });
