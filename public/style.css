@@ -1160,9 +1160,12 @@ select.input-field option {
     display: none;
     align-items: center;
     justify-content: center;
+    /* Bug fix: تأكيد أن الـ overlay لا يحجب النقرات عند إغلاقه */
+    pointer-events: none;
 }
 .modal-overlay.show {
     display: flex;
+    pointer-events: auto;
 }
 
 .modal-box {
@@ -2601,9 +2604,11 @@ select.input-field option {
     z-index: 290;
     backdrop-filter: blur(2px);
     -webkit-backdrop-filter: blur(2px);
+    pointer-events: none;
 }
 .sidebar-overlay.active {
     display: block;
+    pointer-events: auto;
 }
 
 /* ── تمرير سلس ── */

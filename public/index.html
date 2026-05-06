@@ -975,15 +975,23 @@
     function closeSidebarOverlay() {
         document.querySelectorAll('.sidebar').forEach(s => s.classList.remove('open'));
         document.getElementById('sidebar-overlay').classList.remove('active');
+        // Bug fix: إعادة التمرير للـ body لو لم يكن هناك modal مفتوح
+        if (!document.querySelector('.modal-overlay.show, .modal-overlay.active')) {
+            document.body.style.overflow = '';
+        }
     }
 
     // تحديث زر toggleSidebar ليُظهر الـ overlay
-    const _origToggle = window.toggleSidebar;
     window.toggleSidebar = function(id) {
         const sidebar = document.getElementById(id);
         if (!sidebar) return;
         sidebar.classList.toggle('open');
-        document.getElementById('sidebar-overlay').classList.toggle('active', sidebar.classList.contains('open'));
+        const isOpen = sidebar.classList.contains('open');
+        document.getElementById('sidebar-overlay').classList.toggle('active', isOpen);
+        // Bug fix: منع تمرير الـ body عند فتح الـ sidebar على الهاتف
+        if (window.innerWidth <= 768) {
+            document.body.style.overflow = isOpen ? 'hidden' : '';
+        }
     };
 
     // تنشيط زر الشريط السفلي
@@ -1047,6 +1055,18 @@
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !document.getElementById('login-page').classList.contains('hidden')) {
                 handleLogin();
+            }
+            // Bug fix: مفتاح Escape يُغلق السايدبار أو الـ modal المفتوح
+            if (e.key === 'Escape') {
+                const openModal = document.querySelector('.modal-overlay.show, .modal-overlay.active');
+                if (openModal) {
+                    openModal.classList.remove('show', 'active');
+                    if (!document.querySelector('.modal-overlay.show, .modal-overlay.active')) {
+                        document.body.style.overflow = '';
+                    }
+                } else {
+                    closeSidebarOverlay();
+                }
             }
         });
     </script>
