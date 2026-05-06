@@ -138,6 +138,7 @@ body {
     inset: 0;
     z-index: 0;
     background: var(--login-bg-gradient, var(--bg));
+    pointer-events: none; /* Bug fix: بدون هذا يحجب الـ overlay الـ inputs على الهاتف */
 }
 
 .blob {
@@ -174,7 +175,7 @@ body {
 
 .login-wrapper {
     position: relative;
-    z-index: 1;
+    z-index: 10; /* Bug fix: رُفع من 1 إلى 10 لضمان ظهور الـ card فوق الـ background */
     height: 100vh;
     display: flex;
     align-items: center;
@@ -184,6 +185,8 @@ body {
 
 /* ==================== بطاقة الدخول ==================== */
 .login-card {
+    position: relative; /* Bug fix: مطلوب لضمان أن الـ z-index يعمل */
+    z-index: 1;
     width: 100%;
     max-width: 480px;
     padding: 40px;
@@ -270,6 +273,13 @@ body {
     font-size: 0.95rem;
     transition: border-color var(--transition), box-shadow var(--transition);
     outline: none;
+    /* Bug fix: touch-action يمنع تأخير 300ms على iOS/Android */
+    touch-action: manipulation;
+    /* Bug fix: min-height يضمن أن مساحة اللمس كافية على الهاتف */
+    min-height: 48px;
+    /* Bug fix: -webkit-appearance none يحل مشاكل الـ input على iOS */
+    -webkit-appearance: none;
+    appearance: none;
 }
 .input-field:focus {
     border-color: var(--accent);
@@ -288,6 +298,7 @@ textarea.input-field {
 }
 select.input-field {
     appearance: none;
+    -webkit-appearance: none;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%2394a3b8' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: left 14px center;
@@ -355,6 +366,10 @@ select.input-field option {
     display: inline-flex;
     align-items: center;
     gap: 8px;
+    /* Bug fix: touch-action يمنع تأخير اللمس على الهاتف */
+    touch-action: manipulation;
+    /* Bug fix: min-height يضمن منطقة نقر كافية على الهاتف */
+    min-height: 48px;
 }
 .btn-primary:hover {
     transform: translateY(-1px);
@@ -2691,5 +2706,70 @@ html {
         .content-body {
             padding-bottom: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom) + 16px) !important;
         }
+    }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   Bug fix: إصلاح تفاعل صفحة الدخول على الهاتف
+   المشكلة: الـ inputs والأزرار في صفحة الدخول لا تستجيب للمس
+   السبب: الخلفية (login-bg) تعترض أحداث اللمس + z-index منخفض
+   ══════════════════════════════════════════════════════════════ */
+
+/* ضمان أن صفحة الدخول والتسجيل تعمل بشكل صحيح على الهاتف */
+#login-page,
+#register-page {
+    position: relative;
+    /* Bug fix: isolation:isolate يمنع الـ z-index من التشابك مع عناصر أخرى */
+    isolation: isolate;
+}
+
+/* ضمان أن جميع العناصر التفاعلية في صفحة الدخول قابلة للنقر */
+#login-page .login-card,
+#register-page .login-card {
+    position: relative;
+    z-index: 10;
+}
+
+#login-page .form-group,
+#register-page .form-group,
+#login-page .input-field,
+#register-page .input-field,
+#login-page button,
+#register-page button {
+    position: relative;
+    z-index: 11;
+    /* Bug fix: pointer-events auto يضمن تلقي أحداث اللمس */
+    pointer-events: auto;
+}
+
+/* Bug fix: font-size 16px على الهاتف يمنع iOS من التكبير التلقائي عند الضغط */
+@media (max-width: 768px) {
+    #login-page .input-field,
+    #register-page .input-field {
+        font-size: 16px !important;
+    }
+
+    /* تكبير منطقة اللمس للأزرار في صفحة الدخول */
+    #login-page button,
+    #register-page button {
+        min-height: 48px;
+        touch-action: manipulation;
+    }
+
+    /* Bug fix: منع iOS من إضافة ظل داخلي للـ input */
+    #login-page input,
+    #register-page input {
+        -webkit-appearance: none;
+        appearance: none;
+        border-radius: 8px;
+    }
+
+    /* scrollbar على صفحة التسجيل على الهاتف */
+    #register-page .login-wrapper {
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        align-items: flex-start;
+        padding-top: 20px;
+        padding-bottom: 40px;
     }
 }
