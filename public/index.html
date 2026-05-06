@@ -2,7 +2,11 @@
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#060d1b">
     <title>نظام تبريرات الغياب</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -890,7 +894,155 @@
     <!-- Toast -->
     <div class="toast-container" id="toast-container"></div>
 
+    <!-- Sidebar Overlay (mobile) -->
+    <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebarOverlay()"></div>
+
+    <!-- ── شريط التنقل السفلي — الطالب ── -->
+    <nav class="mobile-bottom-nav" id="student-bottom-nav" style="display:none;">
+        <button class="mobile-bottom-nav__item active" data-page="student-main" onclick="showStudentPage('student-main');setBottomActive('student-bottom-nav',this)">
+            <i class="fas fa-house"></i>
+            <span>الرئيسية</span>
+        </button>
+        <button class="mobile-bottom-nav__item" data-page="student-new" onclick="showStudentPage('student-new');setBottomActive('student-bottom-nav',this)">
+            <i class="fas fa-plus-circle"></i>
+            <span>تبرير جديد</span>
+        </button>
+        <button class="mobile-bottom-nav__item" data-page="student-history" onclick="showStudentPage('student-history');setBottomActive('student-bottom-nav',this)">
+            <i class="fas fa-clock-rotate-left"></i>
+            <span>السجل</span>
+        </button>
+        <button class="mobile-bottom-nav__item" data-page="student-appeals" onclick="showStudentPage('student-appeals');setBottomActive('student-bottom-nav',this)">
+            <i class="fas fa-gavel"></i>
+            <span>الطعون</span>
+        </button>
+        <button class="mobile-bottom-nav__item" onclick="logout()">
+            <i class="fas fa-right-from-bracket"></i>
+            <span>خروج</span>
+        </button>
+    </nav>
+
+    <!-- ── شريط التنقل السفلي — الأستاذ ── -->
+    <nav class="mobile-bottom-nav" id="teacher-bottom-nav" style="display:none;">
+        <button class="mobile-bottom-nav__item active" data-page="teacher-main" onclick="showTeacherPage('teacher-main');setBottomActive('teacher-bottom-nav',this)">
+            <i class="fas fa-house"></i>
+            <span>الرئيسية</span>
+        </button>
+        <button class="mobile-bottom-nav__item" data-page="teacher-pending" onclick="showTeacherPage('teacher-pending');setBottomActive('teacher-bottom-nav',this)">
+            <i class="fas fa-inbox"></i>
+            <span>قيد المراجعة</span>
+            <span class="mobile-bottom-nav__badge" id="teacher-bottom-badge">0</span>
+        </button>
+        <button class="mobile-bottom-nav__item" data-page="teacher-reviewed" onclick="showTeacherPage('teacher-reviewed');setBottomActive('teacher-bottom-nav',this)">
+            <i class="fas fa-check-double"></i>
+            <span>تمت المراجعة</span>
+        </button>
+        <button class="mobile-bottom-nav__item" onclick="logout()">
+            <i class="fas fa-right-from-bracket"></i>
+            <span>خروج</span>
+        </button>
+    </nav>
+
+    <!-- ── شريط التنقل السفلي — الإدارة ── -->
+    <nav class="mobile-bottom-nav" id="admin-bottom-nav" style="display:none;">
+        <button class="mobile-bottom-nav__item active" data-page="admin-main" onclick="showAdminPage('admin-main');setBottomActive('admin-bottom-nav',this)">
+            <i class="fas fa-chart-pie"></i>
+            <span>الإحصائيات</span>
+        </button>
+        <button class="mobile-bottom-nav__item" data-page="admin-justifications" onclick="showAdminPage('admin-justifications');setBottomActive('admin-bottom-nav',this)">
+            <i class="fas fa-file-lines"></i>
+            <span>التبريرات</span>
+        </button>
+        <button class="mobile-bottom-nav__item" data-page="admin-appeals" onclick="showAdminPage('admin-appeals');setBottomActive('admin-bottom-nav',this)">
+            <i class="fas fa-gavel"></i>
+            <span>الطعون</span>
+            <span class="mobile-bottom-nav__badge" id="admin-bottom-appeals-badge">0</span>
+        </button>
+        <button class="mobile-bottom-nav__item" data-page="admin-users" onclick="showAdminPage('admin-users');setBottomActive('admin-bottom-nav',this)">
+            <i class="fas fa-user-gear"></i>
+            <span>المستخدمون</span>
+        </button>
+        <button class="mobile-bottom-nav__item" onclick="toggleAdminMenu()">
+            <i class="fas fa-ellipsis"></i>
+            <span>المزيد</span>
+        </button>
+    </nav>
+
     <script src="/script.js"></script>
+    <script>
+    /* ─── إضافات للتنقل على الهاتف ─── */
+
+    // إغلاق السايدبار بالنقر على الـ overlay
+    function closeSidebarOverlay() {
+        document.querySelectorAll('.sidebar').forEach(s => s.classList.remove('open'));
+        document.getElementById('sidebar-overlay').classList.remove('active');
+    }
+
+    // تحديث زر toggleSidebar ليُظهر الـ overlay
+    const _origToggle = window.toggleSidebar;
+    window.toggleSidebar = function(id) {
+        const sidebar = document.getElementById(id);
+        if (!sidebar) return;
+        sidebar.classList.toggle('open');
+        document.getElementById('sidebar-overlay').classList.toggle('active', sidebar.classList.contains('open'));
+    };
+
+    // تنشيط زر الشريط السفلي
+    function setBottomActive(navId, btn) {
+        const nav = document.getElementById(navId);
+        if (!nav) return;
+        nav.querySelectorAll('.mobile-bottom-nav__item').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        // أغلق السايدبار لو كان مفتوحاً
+        document.querySelectorAll('.sidebar').forEach(s => s.classList.remove('open'));
+        document.getElementById('sidebar-overlay').classList.remove('active');
+    }
+
+    // إظهار شريط التنقل السفلي حسب دور المستخدم
+    function showMobileBottomNav(role) {
+        document.querySelectorAll('.mobile-bottom-nav').forEach(n => n.style.display = 'none');
+        if (window.innerWidth <= 768) {
+            const map = { student: 'student-bottom-nav', professor: 'teacher-bottom-nav', admin: 'admin-bottom-nav' };
+            const el = document.getElementById(map[role]);
+            if (el) el.style.display = 'flex';
+        }
+    }
+
+    // تحديث badge الطعون
+    function updateAdminBottomBadge(count) {
+        const el = document.getElementById('admin-bottom-appeals-badge');
+        if (el) { el.textContent = count; el.style.display = count > 0 ? 'flex' : 'none'; }
+    }
+    function updateTeacherBottomBadge(count) {
+        const el = document.getElementById('teacher-bottom-badge');
+        if (el) { el.textContent = count; el.style.display = count > 0 ? 'flex' : 'none'; }
+    }
+
+    // مزامنة الشريط السفلي مع تغيير حجم الشاشة
+    window.addEventListener('resize', () => {
+        const role = window._currentUserRole;
+        if (!role) return;
+        if (window.innerWidth > 768) {
+            document.querySelectorAll('.mobile-bottom-nav').forEach(n => n.style.display = 'none');
+        } else {
+            showMobileBottomNav(role);
+        }
+    });
+
+    // قائمة "المزيد" للإدارة على الهاتف
+    function toggleAdminMenu() {
+        // نفتح السايدبار لرؤية باقي الخيارات
+        const sidebar = document.getElementById('admin-sidebar');
+        if (sidebar) {
+            sidebar.classList.add('open');
+            document.getElementById('sidebar-overlay').classList.add('active');
+        }
+    }
+
+    // إخفاء badge 0
+    document.querySelectorAll('.mobile-bottom-nav__badge').forEach(b => {
+        if (b.textContent === '0') b.style.display = 'none';
+    });
+    </script>
     <script>
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !document.getElementById('login-page').classList.contains('hidden')) {
