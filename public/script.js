@@ -418,17 +418,9 @@ function switchPage(dashboardId, sidebarId, pageId) {
     document.querySelectorAll('#' + sidebarId + ' .sidebar-link[data-page]').forEach(l => l.classList.remove('active'));
     document.querySelector('#' + sidebarId + ' .sidebar-link[data-page="' + pageId + '"]')?.classList.add('active');
     document.getElementById(sidebarId)?.classList.remove('open');
-    // Bug fix: إزالة overlay الـ sidebar عند التنقل — بدونها يبقى الـ overlay مرئياً
-    // ويحجب كل المدخلات والنقرات على الهاتف حتى بعد إغلاق الـ sidebar
-    document.getElementById('sidebar-overlay')?.classList.remove('active');
 }
 
-function toggleSidebar(id) {
-    const sidebar = document.getElementById(id);
-    if (!sidebar) return;
-    sidebar.classList.toggle('open');
-    // الدالة في index.html ستُكمل إدارة sidebar-overlay
-}
+function toggleSidebar(id) { document.getElementById(id)?.classList.toggle('open'); }
 
 /* ==================== التقويم ==================== */
 
@@ -1752,34 +1744,8 @@ function getYearLabel(y) {
 }
 
 function avatarInitial(name) { return (name || '?').replace(/^(د\.|أ\.)/, '').trim().charAt(0); }
-function openModal(id) {
-    const el = document.getElementById(id);
-    if (!el) return;
-    // أغلق أي modal مفتوح أولاً لتجنب تراكم overflow:hidden
-    document.querySelectorAll('.modal-overlay.show, .modal-overlay.active').forEach(m => {
-        if (m.id !== id) m.classList.remove('show', 'active');
-    });
-    el.classList.add('show', 'active');
-    document.body.style.overflow = 'hidden';
-    // ضمان إغلاق sidebar-overlay لو كان مفتوحاً
-    document.getElementById('sidebar-overlay')?.classList.remove('active');
-    document.querySelectorAll('.sidebar').forEach(s => s.classList.remove('open'));
-}
-function closeModal(id) {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.classList.remove('show', 'active');
-    if (!document.querySelector('.modal-overlay.show, .modal-overlay.active')) {
-        document.body.style.overflow = '';
-    }
-}
-// دالة طوارئ: تغلق كل شيء وتُعيد التمرير
-function closeAllModals() {
-    document.querySelectorAll('.modal-overlay').forEach(m => m.classList.remove('show', 'active'));
-    document.getElementById('sidebar-overlay')?.classList.remove('active');
-    document.querySelectorAll('.sidebar').forEach(s => s.classList.remove('open'));
-    document.body.style.overflow = '';
-}
+function openModal(id)  { document.getElementById(id)?.classList.add('show'); }
+function closeModal(id) { document.getElementById(id)?.classList.remove('show'); }
 
 function showToast(message, type) {
     const container = document.getElementById('toast-container');
