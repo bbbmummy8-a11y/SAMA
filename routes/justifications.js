@@ -9,21 +9,12 @@ const { authenticate, requireRole, logAudit } = require('../middleware/auth');
 const router = express.Router();
 router.use(authenticate);
 
-// ─── إعداد multer لرفع الملفات ───────────────────────────────────────────────
-const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '../uploads');
-if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, UPLOAD_DIR),
-    filename:    (req, file, cb) => {
-        const ext  = path.extname(file.originalname);
-        const name = `just_${Date.now()}_${Math.random().toString(36).slice(2)}${ext}`;
-        cb(null, name);
-    }
-});
-
+// ─── إعداد multer — نخزّن الملف في الذاكرة ثم نحوّله Base64 في قاعدة البيانات ──
+// سبب التغيير: Render يستخدم Ephemeral Storage، أي أن أي ملف يُكتب على الـ filesystem
+// يُحذف عند كل إعادة نشر أو restart، مما يسبب خطأ "الملف غير موجود على الخادم".
+// الحل: multer.memoryStorage() + تخزين محتوى الملف كـ Base64 في عمود file_data بقاعدة البيانات.
 const upload = multer({
-    storage,
+    storage: multer.memoryStorage(),
     limits: { fileSize: parseInt(process.env.MAX_FILE_SIZE) || 5 * 1024 * 1024 },
     fileFilter: (req, file, cb) => {
         const allowed = ['image/jpeg', 'image/png', 'image/jpg', 'application/pdf'];
@@ -191,32 +182,39 @@ router.post('/', requireRole('student'), upload.single('file'), async (req, res)
             [absenceIds[0], req.user.id]
         );
 
+        // تحويل الملف إلى Base64 إذا وُجد
+        const fileBase64 = req.file ? req.file.buffer.toString('base64') : null;
+
         let justResult;
         if (existingJust.rows.length > 0) {
             justResult = await client.query(
                 `UPDATE justifications
-                 SET text_content=$1, file_path=COALESCE($2, file_path),
+                 SET text_content=$1,
+                     file_path=COALESCE($2, file_path),
                      file_original_name=COALESCE($3, file_original_name),
                      file_type=COALESCE($4, file_type),
+                     file_data=COALESCE($5, file_data),
                      status='pending'
-                 WHERE id=$5 RETURNING *`,
+                 WHERE id=$6 RETURNING *`,
                 [
                     notes || null,
-                    req.file?.filename || null,
+                    req.file ? req.file.originalname : null,
                     req.file?.originalname || null,
                     req.file?.mimetype || null,
+                    fileBase64,
                     existingJust.rows[0].id
                 ]
             );
         } else {
             justResult = await client.query(
-                `INSERT INTO justifications (absence_id, student_id, text_content, file_path, file_original_name, file_type, submitted_at)
-                 VALUES ($1,$2,$3,$4,$5,$6, NOW()) RETURNING *`,
+                `INSERT INTO justifications (absence_id, student_id, text_content, file_path, file_original_name, file_type, file_data, submitted_at)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7, NOW()) RETURNING *`,
                 [
                     absenceIds[0], req.user.id, notes || null,
-                    req.file?.filename || null,
+                    req.file ? req.file.originalname : null,
                     req.file?.originalname || null,
-                    req.file?.mimetype || null
+                    req.file?.mimetype || null,
+                    fileBase64
                 ]
             );
         }
@@ -243,7 +241,7 @@ router.post('/', requireRole('student'), upload.single('file'), async (req, res)
         });
     } catch (err) {
         await client.query('ROLLBACK');
-        if (req.file) fs.unlink(path.join(UPLOAD_DIR, req.file.filename), () => {});
+        // لا حاجة لحذف ملف من disk لأننا نستخدم memoryStorage
         console.error('[POST /justifications]', err);
         res.status(500).json({ error: 'خطأ في تقديم التبرير' });
     } finally {
@@ -274,11 +272,10 @@ router.put('/:id', requireRole('student'), upload.single('file'), async (req, re
         let fileSql = '';
         const fileParams = [];
         if (req.file) {
-            if (just.rows[0].file_path) {
-                fs.unlink(path.join(UPLOAD_DIR, just.rows[0].file_path), () => {});
-            }
-            fileSql = ', file_path=$3, file_original_name=$4, file_type=$5';
-            fileParams.push(req.file.filename, req.file.originalname, req.file.mimetype);
+            // لا حاجة لحذف ملف قديم من disk (نستخدم memoryStorage)
+            const fileBase64 = req.file.buffer.toString('base64');
+            fileSql = ', file_path=$3, file_original_name=$4, file_type=$5, file_data=$6';
+            fileParams.push(req.file.originalname, req.file.originalname, req.file.mimetype, fileBase64);
         }
 
         const idParam = 2 + fileParams.length;
@@ -352,24 +349,22 @@ router.delete('/:id', requireRole('admin'), async (req, res) => {
 router.get('/:id/file', async (req, res) => {
     try {
         const just = await query(
-            'SELECT j.file_path, j.file_original_name, j.file_type, j.student_id FROM justifications j WHERE j.id=$1',
+            'SELECT j.file_data, j.file_original_name, j.file_type, j.student_id FROM justifications j WHERE j.id=$1',
             [req.params.id]
         );
-        if (just.rows.length === 0 || !just.rows[0].file_path)
+        if (just.rows.length === 0 || !just.rows[0].file_data)
             return res.status(404).json({ error: 'الملف غير موجود' });
 
         if (req.user.role === 'student' && just.rows[0].student_id !== req.user.id)
             return res.status(403).json({ error: 'غير مصرح' });
 
-        const filePath = path.resolve(UPLOAD_DIR, just.rows[0].file_path);
-        if (!fs.existsSync(filePath))
-            return res.status(404).json({ error: 'الملف غير موجود على الخادم' });
-
         const mimeType = just.rows[0].file_type || 'application/octet-stream';
+        const buffer   = Buffer.from(just.rows[0].file_data, 'base64');
+
         res.setHeader('Content-Type', mimeType);
         res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(just.rows[0].file_original_name || 'document')}"`);
         res.setHeader('Cache-Control', 'private, max-age=300');
-        res.sendFile(filePath, { root: '/' });
+        res.send(buffer);
     } catch (err) {
         res.status(500).json({ error: 'خطأ في تحميل الملف' });
     }

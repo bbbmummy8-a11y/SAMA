@@ -58,11 +58,15 @@ router.get('/students', requireRole('admin'), async (req, res) => {
         const { search } = req.query;
         let sql = `
             SELECT u.id, u.registration_number, u.full_name_ar, u.email,
-                   u.specialization, u.year_of_study, u.is_active,
+                   -- Bug fix: specialization قد يُخزَّن كـ UUID (معرّف التخصص) بدل اسمه.
+                   -- نحاول المطابقة مع جدول specialties للحصول على الاسم الحقيقي.
+                   COALESCE(sp.name, u.specialization) AS specialization,
+                   u.year_of_study, u.is_active,
                    COUNT(DISTINCT a.id) AS total_absences,
                    COUNT(DISTINCT j.id) AS total_justifications,
                    COUNT(DISTINCT CASE WHEN j.reviewed_at IS NOT NULL THEN j.id END) AS reviewed_justifications
             FROM users u
+            LEFT JOIN specialties sp ON sp.id::text = u.specialization OR sp.name = u.specialization
             LEFT JOIN absences a ON u.id = a.student_id
             LEFT JOIN justifications j ON a.id = j.absence_id
             WHERE u.role = 'student'`;
@@ -71,7 +75,7 @@ router.get('/students', requireRole('admin'), async (req, res) => {
             params.push(`%${search.toLowerCase()}%`);
             sql += ` AND (LOWER(u.full_name_ar) LIKE $1 OR LOWER(u.registration_number) LIKE $1)`;
         }
-        sql += ' GROUP BY u.id ORDER BY u.full_name_ar';
+        sql += ' GROUP BY u.id, sp.name ORDER BY u.full_name_ar';
 
         const result = await query(sql, params);
         res.json({ students: result.rows.map(s => ({
