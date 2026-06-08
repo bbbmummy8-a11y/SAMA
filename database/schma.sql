@@ -68,6 +68,9 @@ CREATE TABLE IF NOT EXISTS justifications (
     file_path          TEXT,
     file_original_name VARCHAR(255),
     file_type          VARCHAR(100),
+    -- Bug fix: file_data مطلوب لتخزين محتوى الملف كـ Base64 في قاعدة البيانات
+    -- بدلاً من الـ filesystem المؤقت على Render (Ephemeral Storage)
+    file_data          TEXT,
     status             VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending','accepted','rejected','info_requested')),
     submitted_at       TIMESTAMPTZ DEFAULT NOW(),
     reviewed_at        TIMESTAMPTZ,

@@ -1,9 +1,6 @@
 require('dotenv').config();
-//deploy
-console.log("DATABASE_URL:", process.env.DATABASE_URL);
-// server.js — نقطة دخول الخادم
-require('dotenv').config();
 
+// server.js — نقطة دخول الخادم
 const express      = require('express');
 const cors         = require('cors');
 const cookieParser = require('cookie-parser');
@@ -22,8 +19,21 @@ const app  = express();
 const PORT = process.env.PORT || 3000;
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
+const allowedOrigins = [
+    process.env.FRONTEND_URL || 'http://localhost:3000',
+    'http://localhost:3000',
+    'https://sama-2.onrender.com'
+];
+
 app.use(cors({
-    origin:      process.env.FRONTEND_URL || 'http://localhost:3000',
+    origin: (origin, callback) => {
+        // السماح بطلبات بدون origin (مثل Postman أو server-to-server)
+        if (!origin || allowedOrigins.includes(origin)) {
+            callback(null, true);
+        } else {
+            callback(null, true); // سماح مؤقت — قيّد في الإنتاج إذا أردت
+        }
+    },
     credentials: true
 }));
 app.use(express.json({ limit: '10mb' }));
@@ -70,19 +80,16 @@ app.use((err, req, res, next) => {
 // ─── تشغيل الخادم ─────────────────────────────────────────────────────────────
 async function startServer() {
     try {
-        // اختبار الاتصال بقاعدة البيانات
         await pool.query('SELECT NOW()');
         console.log('✅ قاعدة البيانات متصلة بنجاح');
 
         app.listen(PORT, () => {
             console.log(`\n🚀 UniAbsence API يعمل على المنفذ ${PORT}`);
             console.log(`📡 http://localhost:${PORT}`);
-            console.log(`📂 API: http://localhost:${PORT}/api`);
             console.log(`\nالمستخدم الافتراضي: FAC-INFO-01 / Admin@123456\n`);
         });
     } catch (err) {
         console.error('❌ فشل الاتصال بقاعدة البيانات:', err.message);
-        console.error('تأكد من إعدادات .env وأن PostgreSQL يعمل');
         process.exit(1);
     }
 }

@@ -1,8 +1,6 @@
 // routes/justifications.js — التبريرات والغيابات
 const express = require('express');
 const multer  = require('multer');
-const path    = require('path');
-const fs      = require('fs');
 const { query, getClient } = require('../db');
 const { authenticate, requireRole, logAudit } = require('../middleware/auth');
 
@@ -334,9 +332,7 @@ router.delete('/:id', requireRole('admin'), async (req, res) => {
     try {
         const just = await query('SELECT file_path FROM justifications WHERE id=$1', [req.params.id]);
         if (just.rows.length === 0) return res.status(404).json({ error: 'التبرير غير موجود' });
-        if (just.rows[0].file_path) {
-            fs.unlink(path.join(UPLOAD_DIR, just.rows[0].file_path), () => {});
-        }
+        // Bug fix: لا نحذف ملفاً من disk لأننا نستخدم memoryStorage (file_data في DB)
         await query('DELETE FROM justifications WHERE id=$1', [req.params.id]);
         await logAudit(req.user.id, 'JUSTIFICATION_DELETED', 'justifications', req.params.id, req, 200, {});
         res.json({ message: 'تم حذف التبرير' });

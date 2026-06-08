@@ -784,13 +784,15 @@ async function loadAndRenderAdminDashboard() {
     if (!statsRes.ok) return;
     const s = statsRes.data;
 
-    const vals = document.querySelectorAll('#admin-main .stat-card__value');
-    if (vals.length >= 4) {
-        vals[0].textContent = s.totalJustifications;
-        vals[1].textContent = s.pendingJustifications;
-        vals[2].textContent = s.acceptanceRate + '%';
-        vals[3].textContent = s.pendingAppeals;
-    }
+    // Bug fix: استخدام IDs الصحيحة كما هي في index.html
+    const el_total   = document.getElementById('admin-stat-total');
+    const el_pending = document.getElementById('admin-stat-pending');
+    const el_rate    = document.getElementById('admin-stat-rate');
+    const el_appeals = document.getElementById('admin-stat-appeals');
+    if (el_total)   el_total.textContent   = s.totalJustifications;
+    if (el_pending) el_pending.textContent = s.pendingJustifications;
+    if (el_rate)    el_rate.textContent    = s.acceptanceRate + '%';
+    if (el_appeals) el_appeals.textContent = s.pendingAppeals;
     document.getElementById('admin-stat-profs')?.setAttribute('data-val', s.totalProfessors);
     document.getElementById('admin-stat-specs')?.setAttribute('data-val', s.totalSpecialties);
     document.getElementById('admin-stat-thismonth')?.setAttribute('data-val', s.thisMonth);
@@ -1762,6 +1764,7 @@ function emptyState(icon, text) {
 }
 
 // ربط فلاتر الإدارة بالتحديث الفوري
+function renderStudentHistory()          { loadAndRenderStudentHistory(); }
 function renderAdminJustifications() { loadAndRenderAdminJustifications(); }
 function renderAdminAppeals()        { loadAndRenderAdminAppeals(); }
 function renderAdminStudents()       { loadAndRenderAdminStudents(); }
