@@ -1,13 +1,11 @@
 -- schema.sql — إنشاء قاعدة بيانات UniAbsence من الصفر
--- شغّله في pgAdmin مرة واحدة على قاعدة بيانات فارغة
+-- ✅ لا يحتاج إلى صلاحيات superuser — يستخدم gen_random_uuid() المدمج
+-- متوافق مع PostgreSQL 13+
 -- ============================================================
-
--- تفعيل uuid
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- ─── جدول المستخدمين ────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS users (
-    id                    UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     registration_number   VARCHAR(50)  UNIQUE NOT NULL,
     password_hash         TEXT         NOT NULL,
     role                  VARCHAR(20)  NOT NULL CHECK (role IN ('admin','professor','student')),
@@ -18,8 +16,6 @@ CREATE TABLE IF NOT EXISTS users (
     specialization        VARCHAR(100),
     year_of_study         INTEGER      CHECK (year_of_study IS NULL OR (year_of_study >= 1 AND year_of_study <= 7)),
     is_active             BOOLEAN      DEFAULT TRUE,
-    -- Bug fix: is_pending was used in routes/auth.js (register + login + /pending)
-    -- but the column was never defined here → INSERT in register threw a SQL error.
     is_pending            BOOLEAN      DEFAULT FALSE,
     is_locked             BOOLEAN      DEFAULT FALSE,
     failed_login_attempts INTEGER      DEFAULT 0,
@@ -30,7 +26,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 -- ─── جدول التخصصات ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS specialties (
-    id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name         VARCHAR(100) UNIQUE NOT NULL,
     faculty_code VARCHAR(20)  DEFAULT 'GEN',
     is_active    BOOLEAN      DEFAULT TRUE,
@@ -39,7 +35,7 @@ CREATE TABLE IF NOT EXISTS specialties (
 
 -- ─── جدول المواد الدراسية ────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS subjects (
-    id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     code          VARCHAR(50)  UNIQUE NOT NULL,
     name_ar       VARCHAR(150) NOT NULL,
     professor_id  UUID         REFERENCES users(id) ON DELETE SET NULL,
@@ -53,7 +49,7 @@ CREATE TABLE IF NOT EXISTS subjects (
 
 -- ─── جدول الغيابات ───────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS absences (
-    id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     student_id    UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     subject_id    UUID        NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
     absence_date  DATE        NOT NULL,
@@ -65,7 +61,7 @@ CREATE TABLE IF NOT EXISTS absences (
 
 -- ─── جدول التبريرات ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS justifications (
-    id                 UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     absence_id         UUID        NOT NULL REFERENCES absences(id) ON DELETE CASCADE,
     student_id         UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     text_content       TEXT,
@@ -81,7 +77,7 @@ CREATE TABLE IF NOT EXISTS justifications (
 
 -- ─── جدول الطعون ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS appeals (
-    id                 UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     justification_id   UUID        NOT NULL REFERENCES justifications(id) ON DELETE CASCADE,
     student_id         UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     appeal_text        TEXT        NOT NULL,
@@ -93,7 +89,7 @@ CREATE TABLE IF NOT EXISTS appeals (
 
 -- ─── جدول Refresh Tokens ─────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS refresh_tokens (
-    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id     UUID  NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     token_hash  TEXT  NOT NULL UNIQUE,
     expires_at  TIMESTAMPTZ NOT NULL,
@@ -102,7 +98,7 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 
 -- ─── جدول سجل الأحداث ────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS audit_logs (
-    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id     UUID         REFERENCES users(id) ON DELETE SET NULL,
     action      VARCHAR(80)  NOT NULL,
     resource    VARCHAR(50),
@@ -134,7 +130,7 @@ INSERT INTO users (
     'admin@univ.dz',
     'GEN',
     true,
-    false   -- Bug fix: admin must never be pending
+    false
 ) ON CONFLICT (registration_number) DO UPDATE SET
     is_active             = true,
     is_pending            = false,
