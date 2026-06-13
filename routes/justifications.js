@@ -46,7 +46,8 @@ function formatJust(row) {
         submittedAt:     row.submitted_at,
         reviewedAt:      row.reviewed_at,
         reviewedBy:      row.reviewer_name || null,
-        submissionAttempt: row.submission_attempt || 1
+        submissionAttempt: row.submission_attempt || 1,
+        subjectName:     row.subject_name || ''
     };
 }
 
@@ -136,12 +137,33 @@ router.post('/', requireRole('student'), upload.single('file'), async (req, res)
             : 'cours';
 
         for (const sess of sessionsArr) {
-            const subResult = await client.query(
-                'SELECT id FROM subjects WHERE name_ar = $1 AND is_active = true LIMIT 1',
-                [sess.subject]
-            );
-            if (subResult.rows.length === 0) continue;
-            const subjectId = subResult.rows[0].id;
+            // Bug fix: استخدام subjectId مباشرةً إذا أرسله الفرونتند (أسرع وأدق)
+            // والرجوع إلى البحث بالاسم كحل احتياطي فقط
+            let subjectId = sess.subjectId || sess.subject_id || null;
+
+            if (!subjectId) {
+                const subResult = await client.query(
+                    'SELECT id FROM subjects WHERE name_ar = $1 AND is_active = true LIMIT 1',
+                    [sess.subject]
+                );
+                if (subResult.rows.length === 0) continue;
+                subjectId = subResult.rows[0].id;
+            } else {
+                // التحقق من وجود المادة وأنها نشطة
+                const subResult = await client.query(
+                    'SELECT id FROM subjects WHERE id = $1 AND is_active = true LIMIT 1',
+                    [subjectId]
+                );
+                if (subResult.rows.length === 0) {
+                    // جرب بالاسم كبديل
+                    const subByName = await client.query(
+                        'SELECT id FROM subjects WHERE name_ar = $1 AND is_active = true LIMIT 1',
+                        [sess.subject]
+                    );
+                    if (subByName.rows.length === 0) continue;
+                    subjectId = subByName.rows[0].id;
+                }
+            }
 
             let absResult = await client.query(
                 'SELECT id FROM absences WHERE student_id=$1 AND subject_id=$2 AND absence_date=$3',
@@ -240,8 +262,10 @@ router.post('/', requireRole('student'), upload.single('file'), async (req, res)
     } catch (err) {
         await client.query('ROLLBACK');
         // لا حاجة لحذف ملف من disk لأننا نستخدم memoryStorage
-        console.error('[POST /justifications]', err);
-        res.status(500).json({ error: 'خطأ في تقديم التبرير' });
+        console.error('[POST /justifications] خطأ:', err.message);
+        console.error('[POST /justifications] كود الخطأ:', err.code);
+        console.error('[POST /justifications] تفاصيل:', err.detail || '');
+        res.status(500).json({ error: 'خطأ في تقديم التبرير', detail: err.message });
     } finally {
         client.release();
     }
