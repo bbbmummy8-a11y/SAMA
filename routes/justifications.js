@@ -7,10 +7,7 @@ const { authenticate, requireRole, logAudit } = require('../middleware/auth');
 const router = express.Router();
 router.use(authenticate);
 
-// ─── إعداد multer — نخزّن الملف في الذاكرة ثم نحوّله Base64 في قاعدة البيانات ──
-// سبب التغيير: Render يستخدم Ephemeral Storage، أي أن أي ملف يُكتب على الـ filesystem
-// يُحذف عند كل إعادة نشر أو restart، مما يسبب خطأ "الملف غير موجود على الخادم".
-// الحل: multer.memoryStorage() + تخزين محتوى الملف كـ Base64 في عمود file_data بقاعدة البيانات.
+// ─── إعداد multer ─────────────────────────────────────────────────────────────
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: parseInt(process.env.MAX_FILE_SIZE) || 5 * 1024 * 1024 },
@@ -20,38 +17,51 @@ const upload = multer({
     }
 });
 
+// ─── التحقق من وجود عمود file_data وإضافته إذا لم يكن موجوداً ────────────────
+async function ensureFileDataColumn() {
+    try {
+        await query(`ALTER TABLE justifications ADD COLUMN IF NOT EXISTS file_data TEXT`);
+        console.log('[justifications] ✅ تم التحقق من عمود file_data');
+    } catch (err) {
+        console.warn('[justifications] ⚠️ تحذير عند التحقق من file_data:', err.message);
+    }
+}
+ensureFileDataColumn();
+
 // ─── دالة تنسيق التبرير ──────────────────────────────────────────────────────
 function formatJust(row) {
     return {
-        id:              row.id,
-        studentId:       row.student_id,
-        studentName:     row.student_name || '',
+        id:               row.id,
+        studentId:        row.student_id,
+        studentName:      row.student_name || '',
         studentSpecialty: row.student_specialty || '',
-        absenceId:       row.absence_id,
-        date:            row.absence_date ? new Date(row.absence_date).toISOString().slice(0, 10) : '',
-        status:          row.status,
-        notes:           row.text_content || '',
-        fileName:        row.file_original_name || null,
-        filePath:        row.file_path || null,
-        fileType:        row.file_type || null,
-        sessionType:     (row.session_type || '').toLowerCase(),
-        sessionTypeLabel: { cours: 'Cours (محاضرة)', td: 'TD (أعمال موجهة)', tp: 'TP (أعمال تطبيقية)', exam: 'Exam (امتحان)' }[(row.session_type || '').toLowerCase()] || row.session_type || '',
-        timeFrom:        row.session_time ? row.session_time.split('-')[0] : '',
-        timeTo:          row.session_time ? row.session_time.split('-')[1] || '' : '',
-        sessions:        row.sessions || [],
-        rejectionReason: row.review_notes || '',
-        hasAppeal:       row.has_appeal || false,
-        appealStatus:    row.appeal_status || null,
-        appealReason:    row.appeal_text || '',
-        submittedAt:     row.submitted_at,
-        reviewedAt:      row.reviewed_at,
-        reviewedBy:      row.reviewer_name || null,
-        submissionAttempt: row.submission_attempt || 1,
-        subjectName:     row.subject_name || ''
+        absenceId:        row.absence_id,
+        date:             row.absence_date ? new Date(row.absence_date).toISOString().slice(0, 10) : '',
+        status:           row.status,
+        notes:            row.text_content || '',
+        fileName:         row.file_original_name || null,
+        filePath:         row.file_path || null,
+        fileType:         row.file_type || null,
+        sessionType:      (row.session_type || '').toLowerCase(),
+        sessionTypeLabel: {
+            cours: 'Cours (محاضرة)', td: 'TD (أعمال موجهة)',
+            tp: 'TP (أعمال تطبيقية)', exam: 'Exam (امتحان)'
+        }[(row.session_type || '').toLowerCase()] || row.session_type || '',
+        timeFrom:         row.session_time ? row.session_time.split('-')[0] : '',
+        timeTo:           row.session_time ? row.session_time.split('-')[1] || '' : '',
+        sessions:         row.sessions || [],
+        rejectionReason:  row.review_notes || '',
+        hasAppeal:        row.has_appeal || false,
+        appealStatus:     row.appeal_status || null,
+        appealReason:     row.appeal_text || '',
+        submittedAt:      row.submitted_at,
+        reviewedAt:       row.reviewed_at,
+        reviewedBy:       row.reviewer_name || null,
+        submissionAttempt: row.submission_attempt || 1
     };
 }
 
-// ─── GET /api/justifications — قائمة التبريرات ──────────────────────────────
+// ─── GET /api/justifications ──────────────────────────────────────────────────
 router.get('/', async (req, res) => {
     try {
         const { status, specialty, student_id } = req.query;
@@ -117,7 +127,15 @@ router.post('/', requireRole('student'), upload.single('file'), async (req, res)
         await client.query('BEGIN');
 
         const { date, sessions, notes, session_type, time_from, time_to } = req.body;
-        const sessionsArr = typeof sessions === 'string' ? JSON.parse(sessions) : (sessions || []);
+
+        // ─── تحليل sessions ───────────────────────────────────────────────────
+        let sessionsArr = [];
+        try {
+            sessionsArr = typeof sessions === 'string' ? JSON.parse(sessions) : (sessions || []);
+        } catch (parseErr) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: 'تنسيق المواد المرسلة غير صحيح' });
+        }
 
         if (!date) {
             await client.query('ROLLBACK');
@@ -136,48 +154,45 @@ router.post('/', requireRole('student'), upload.single('file'), async (req, res)
             ? session_type.toLowerCase()
             : 'cours';
 
+        // ─── معالجة كل مادة ───────────────────────────────────────────────────
         for (const sess of sessionsArr) {
-            // Bug fix: استخدام subjectId مباشرةً إذا أرسله الفرونتند (أسرع وأدق)
-            // والرجوع إلى البحث بالاسم كحل احتياطي فقط
+            // الأولوية: استخدام subjectId مباشرةً إذا أرسله الفرونتند
             let subjectId = sess.subjectId || sess.subject_id || null;
 
-            if (!subjectId) {
+            if (subjectId) {
+                // التحقق من وجود المادة وأنها نشطة
+                const check = await client.query(
+                    'SELECT id FROM subjects WHERE id = $1 AND is_active = true',
+                    [subjectId]
+                );
+                if (check.rows.length === 0) {
+                    // المعرف لم يُطابق → جرب بالاسم
+                    subjectId = null;
+                }
+            }
+
+            // fallback: البحث بالاسم
+            if (!subjectId && sess.subject) {
                 const subResult = await client.query(
                     'SELECT id FROM subjects WHERE name_ar = $1 AND is_active = true LIMIT 1',
                     [sess.subject]
                 );
-                if (subResult.rows.length === 0) continue;
-                subjectId = subResult.rows[0].id;
-            } else {
-                // التحقق من وجود المادة وأنها نشطة
-                const subResult = await client.query(
-                    'SELECT id FROM subjects WHERE id = $1 AND is_active = true LIMIT 1',
-                    [subjectId]
-                );
                 if (subResult.rows.length === 0) {
-                    // جرب بالاسم كبديل
-                    const subByName = await client.query(
-                        'SELECT id FROM subjects WHERE name_ar = $1 AND is_active = true LIMIT 1',
-                        [sess.subject]
-                    );
-                    if (subByName.rows.length === 0) continue;
-                    subjectId = subByName.rows[0].id;
+                    console.warn(`[POST /justifications] المادة غير موجودة: "${sess.subject}"`);
+                    continue;
                 }
+                subjectId = subResult.rows[0].id;
             }
 
+            if (!subjectId) continue;
+
+            // جلب أو إنشاء سجل الغياب
             let absResult = await client.query(
                 'SELECT id FROM absences WHERE student_id=$1 AND subject_id=$2 AND absence_date=$3',
                 [req.user.id, subjectId, date]
             );
 
             if (absResult.rows.length === 0) {
-                // ─── Bug fix #2 ───────────────────────────────────────────────
-                // الكود القديم كان يُدرج عمود recorded_by في INSERT لكن هذا
-                // العمود غير موجود في جدول absences في schema.sql، مما يُسبب
-                // خطأ SQL → 500 "خطأ في تقديم التبرير" في كل مرة يرفع فيها
-                // الطالب تبريراً جديداً.
-                // الحل: إزالة recorded_by من الـ INSERT تماماً.
-                // ─────────────────────────────────────────────────────────────
                 absResult = await client.query(
                     `INSERT INTO absences (student_id, subject_id, absence_date, session_type, session_time)
                      VALUES ($1,$2,$3,$4,$5) RETURNING id`,
@@ -194,48 +209,46 @@ router.post('/', requireRole('student'), upload.single('file'), async (req, res)
 
         if (absenceIds.length === 0) {
             await client.query('ROLLBACK');
-            return res.status(400).json({ error: 'لم يتم العثور على المواد المحددة' });
+            return res.status(400).json({ error: 'لم يتم العثور على المواد المحددة، تأكد من صلاحية التخصص والمواد' });
         }
 
+        // ─── تحويل الملف إلى Base64 ───────────────────────────────────────────
+        const fileBase64 = req.file ? req.file.buffer.toString('base64') : null;
+        const fileName   = req.file ? req.file.originalname : null;
+        const fileMime   = req.file ? req.file.mimetype : null;
+
+        // ─── حفظ التبرير (تحديث أو إدراج جديد) ──────────────────────────────
         const existingJust = await client.query(
             'SELECT id FROM justifications WHERE absence_id = $1 AND student_id = $2',
             [absenceIds[0], req.user.id]
         );
 
-        // تحويل الملف إلى Base64 إذا وُجد
-        const fileBase64 = req.file ? req.file.buffer.toString('base64') : null;
-
         let justResult;
         if (existingJust.rows.length > 0) {
+            // تحديث تبرير موجود
             justResult = await client.query(
                 `UPDATE justifications
-                 SET text_content=$1,
-                     file_path=COALESCE($2, file_path),
-                     file_original_name=COALESCE($3, file_original_name),
-                     file_type=COALESCE($4, file_type),
-                     file_data=COALESCE($5, file_data),
-                     status='pending'
-                 WHERE id=$6 RETURNING *`,
-                [
-                    notes || null,
-                    req.file ? req.file.originalname : null,
-                    req.file?.originalname || null,
-                    req.file?.mimetype || null,
-                    fileBase64,
-                    existingJust.rows[0].id
-                ]
+                 SET text_content        = $1,
+                     file_path           = COALESCE($2, file_path),
+                     file_original_name  = COALESCE($3, file_original_name),
+                     file_type           = COALESCE($4, file_type),
+                     file_data           = COALESCE($5, file_data),
+                     status              = 'pending',
+                     submitted_at        = NOW()
+                 WHERE id = $6
+                 RETURNING *`,
+                [notes || null, fileName, fileName, fileMime, fileBase64, existingJust.rows[0].id]
             );
         } else {
+            // إدراج تبرير جديد
             justResult = await client.query(
-                `INSERT INTO justifications (absence_id, student_id, text_content, file_path, file_original_name, file_type, file_data, submitted_at)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7, NOW()) RETURNING *`,
-                [
-                    absenceIds[0], req.user.id, notes || null,
-                    req.file ? req.file.originalname : null,
-                    req.file?.originalname || null,
-                    req.file?.mimetype || null,
-                    fileBase64
-                ]
+                `INSERT INTO justifications
+                     (absence_id, student_id, text_content,
+                      file_path, file_original_name, file_type, file_data, submitted_at)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7, NOW())
+                 RETURNING *`,
+                [absenceIds[0], req.user.id, notes || null,
+                 fileName, fileName, fileMime, fileBase64]
             );
         }
 
@@ -246,26 +259,28 @@ router.post('/', requireRole('student'), upload.single('file'), async (req, res)
             'SELECT session_type, session_time FROM absences WHERE id = $1',
             [absenceIds[0]]
         );
-        const savedSessionType = absRow.rows[0]?.session_type || session_type || 'cours';
-        const savedSessionTime = absRow.rows[0]?.session_time || null;
 
         res.status(201).json({
             message: 'تم تقديم التبرير بنجاح',
             justification: formatJust({
                 ...justResult.rows[0],
-                absence_date:  new Date(date),
-                session_type:  savedSessionType,
-                session_time:  savedSessionTime,
-                sessions:      sessionsArr
+                absence_date: new Date(date),
+                session_type: absRow.rows[0]?.session_type || normalizedSessionType,
+                session_time: absRow.rows[0]?.session_time || null,
+                sessions:     sessionsArr
             })
         });
+
     } catch (err) {
-        await client.query('ROLLBACK');
-        // لا حاجة لحذف ملف من disk لأننا نستخدم memoryStorage
-        console.error('[POST /justifications] خطأ:', err.message);
-        console.error('[POST /justifications] كود الخطأ:', err.code);
-        console.error('[POST /justifications] تفاصيل:', err.detail || '');
-        res.status(500).json({ error: 'خطأ في تقديم التبرير', detail: err.message });
+        try { await client.query('ROLLBACK'); } catch (_) {}
+        console.error('[POST /justifications] ❌ خطأ:', err.message);
+        console.error('[POST /justifications]    code:', err.code);
+        console.error('[POST /justifications]    detail:', err.detail || '');
+        console.error('[POST /justifications]    hint:', err.hint || '');
+        res.status(500).json({
+            error: 'خطأ في تقديم التبرير',
+            debug: process.env.NODE_ENV !== 'production' ? err.message : undefined
+        });
     } finally {
         client.release();
     }
@@ -294,7 +309,6 @@ router.put('/:id', requireRole('student'), upload.single('file'), async (req, re
         let fileSql = '';
         const fileParams = [];
         if (req.file) {
-            // لا حاجة لحذف ملف قديم من disk (نستخدم memoryStorage)
             const fileBase64 = req.file.buffer.toString('base64');
             fileSql = ', file_path=$3, file_original_name=$4, file_type=$5, file_data=$6';
             fileParams.push(req.file.originalname, req.file.originalname, req.file.mimetype, fileBase64);
@@ -314,7 +328,7 @@ router.put('/:id', requireRole('student'), upload.single('file'), async (req, re
     }
 });
 
-// ─── POST /api/justifications/:id/review — مراجعة تبرير (أستاذ/إدارة) ───────
+// ─── POST /api/justifications/:id/review — مراجعة تبرير ─────────────────────
 router.post('/:id/review', requireRole('professor', 'admin'), async (req, res) => {
     const { decision, notes } = req.body;
     if (!['accepted', 'rejected', 'info_requested'].includes(decision))
@@ -351,12 +365,11 @@ router.post('/:id/review', requireRole('professor', 'admin'), async (req, res) =
     }
 });
 
-// ─── DELETE /api/justifications/:id — حذف تبرير (إدارة) ─────────────────────
+// ─── DELETE /api/justifications/:id ──────────────────────────────────────────
 router.delete('/:id', requireRole('admin'), async (req, res) => {
     try {
-        const just = await query('SELECT file_path FROM justifications WHERE id=$1', [req.params.id]);
+        const just = await query('SELECT id FROM justifications WHERE id=$1', [req.params.id]);
         if (just.rows.length === 0) return res.status(404).json({ error: 'التبرير غير موجود' });
-        // Bug fix: لا نحذف ملفاً من disk لأننا نستخدم memoryStorage (file_data في DB)
         await query('DELETE FROM justifications WHERE id=$1', [req.params.id]);
         await logAudit(req.user.id, 'JUSTIFICATION_DELETED', 'justifications', req.params.id, req, 200, {});
         res.json({ message: 'تم حذف التبرير' });
@@ -365,7 +378,7 @@ router.delete('/:id', requireRole('admin'), async (req, res) => {
     }
 });
 
-// ─── GET /api/justifications/:id/file — تحميل ملف التبرير ───────────────────
+// ─── GET /api/justifications/:id/file ────────────────────────────────────────
 router.get('/:id/file', async (req, res) => {
     try {
         const just = await query(
